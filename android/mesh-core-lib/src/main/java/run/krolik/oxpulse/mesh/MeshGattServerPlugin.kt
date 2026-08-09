@@ -70,6 +70,7 @@ class MeshGattServerPlugin : Plugin() {
      *   - advertiseCallback leaks an active LE advertising session (issue #10);
      *   - connectedDevices holds stale BluetoothDevice references.
      */
+    @Synchronized
     override fun handleOnDestroy() {
         super.handleOnDestroy()
         // Stop advertising first — stops new connections before we tear down the server.
@@ -95,6 +96,7 @@ class MeshGattServerPlugin : Plugin() {
     // -------------------------------------------------------------------------
 
     @PluginMethod
+    @Synchronized
     fun startAdvertising(call: PluginCall) {
         // B1.9: compare via PermissionState enum, not .name string.
         if (getPermissionState("bluetooth") != PermissionState.GRANTED) {
@@ -174,6 +176,7 @@ class MeshGattServerPlugin : Plugin() {
     }
 
     @PluginMethod
+    @Synchronized
     fun stopAdvertising(call: PluginCall) {
         val cb = advertiseCallback
         if (cb != null) {
@@ -188,6 +191,7 @@ class MeshGattServerPlugin : Plugin() {
     // -------------------------------------------------------------------------
 
     @PluginMethod
+    @Synchronized
     fun startGattServer(call: PluginCall) {
         // B1.9: compare via PermissionState enum, not .name string.
         if (getPermissionState("bluetooth") != PermissionState.GRANTED) {
@@ -264,7 +268,11 @@ class MeshGattServerPlugin : Plugin() {
                     }
                 }
                 if (responseNeeded) {
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    // gattServer is read from the binder thread — synchronize against
+                    // stopGattServer/handleOnDestroy which null it from the main thread.
+                    synchronized(this@MeshGattServerPlugin) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    }
                 }
             }
 
@@ -278,7 +286,9 @@ class MeshGattServerPlugin : Plugin() {
                 value: ByteArray?,
             ) {
                 if (responseNeeded) {
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    synchronized(this@MeshGattServerPlugin) {
+                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                    }
                 }
             }
         }
@@ -294,10 +304,13 @@ class MeshGattServerPlugin : Plugin() {
     }
 
     @PluginMethod
+    @Synchronized
     fun stopGattServer(call: PluginCall) {
         val server = gattServer
         if (server != null) {
-            for (device in connectedDevices.values) {
+            // Snapshot keys before iteration — a binder-thread callback could
+            // add/remove a device during the loop, causing CME.
+            for (device in connectedDevices.values.toList()) {
                 server.cancelConnection(device)
             }
             connectedDevices.clear()
@@ -313,6 +326,7 @@ class MeshGattServerPlugin : Plugin() {
     // -------------------------------------------------------------------------
 
     @PluginMethod
+    @Synchronized
     fun notifyTx(call: PluginCall) {
         val address = call.getString("deviceAddress")
         val dataB64 = call.getString("data")
@@ -328,6 +342,10 @@ class MeshGattServerPlugin : Plugin() {
             return
         }
 
+        // Capture locals inside the synchronized block (this method is @Synchronized,
+        // so the null check and the notify are atomic with respect to stopGattServer).
+        // Without this, stopGattServer could null txCharacteristic between the null
+        // check and the synchronized(txChar) block, causing an NPE (issue #16).
         val server = gattServer
         val txChar = txCharacteristic
         if (server == null || txChar == null) {
@@ -346,6 +364,8 @@ class MeshGattServerPlugin : Plugin() {
         // B1.7: synchronize value-set + notify to prevent races when multiple
         // coroutines call notifyTx concurrently on the same txCharacteristic.
         // B1.8: wrap in try/catch for IllegalArgumentException (device disconnected mid-notify).
+        // The method-level @Synchronized also prevents stopGattServer from nulling
+        // txCharacteristic between the null check above and this block (issue #16).
         val notified: Boolean = try {
             synchronized(txChar) {
                 txChar.value = bytes
@@ -353,6 +373,12 @@ class MeshGattServerPlugin : Plugin() {
             }
         } catch (e: IllegalArgumentException) {
             call.reject("device-disconnected", e)
+            return
+        } catch (e: NullPointerException) {
+            // Defense-in-depth: if txChar is nulled between the null check and
+            // the synchronized block despite @Synchronized (e.g. via reflection),
+            // catch the NPE rather than crashing the plugin call.
+            call.reject("gatt-server-closed", e)
             return
         }
 
