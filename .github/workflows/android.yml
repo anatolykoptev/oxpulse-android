@@ -66,6 +66,17 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --console=plain
 
+      # ── Run unit tests on JVM (no emulator needed) ─────────────────────────
+      # Without this step CI is synthetic-green: a broken code change compiles,
+      # the APK assembles, and CI passes — even if every test would fail.
+      # Instrumented tests (connectedAndroidTest) require an emulator and are
+      # deferred to a follow-up; unit tests run on the JVM and catch regressions
+      # in pure-Java/Kotlin logic.
+      - name: Run unit tests
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: android
+        run: ./gradlew test --no-daemon --console=plain
+
       # ── The gate that v0.1.0 needed and did not have ────────────────────────
       # A green Gradle build does NOT mean the app can start. :app had no
       # kotlin-android plugin, so its .kt sources were silently skipped and the
