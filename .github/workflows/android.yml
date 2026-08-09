@@ -94,7 +94,12 @@ jobs:
           printf '%s' "$KEYSTORE_B64" | base64 -d > android/release.jks
           # Never echo these — they are written, never printed.
           {
-            echo "storeFile=release.jks"
+            # ABSOLUTE path. `storeFile file(...)` sits in app/build.gradle, and
+            # Gradle resolves a relative file() against the MODULE dir, so a bare
+            # "release.jks" is looked up at android/app/release.jks — not where
+            # this step writes it. The failure names the wrong-but-plausible path
+            # and says nothing about module-relative resolution.
+            echo "storeFile=$PWD/android/release.jks"
             echo "storePassword=$STORE_PASSWORD"
             echo "keyAlias=$KEY_ALIAS"
             echo "keyPassword=$KEY_PASSWORD"
