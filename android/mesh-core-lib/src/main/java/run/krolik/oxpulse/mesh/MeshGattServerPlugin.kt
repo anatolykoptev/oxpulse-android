@@ -62,6 +62,34 @@ class MeshGattServerPlugin : Plugin() {
 
     private var advertiseCallback: AdvertiseCallback? = null
 
+    /**
+     * Called by Capacitor when the bridge activity is destroyed — the guaranteed
+     * cleanup path for BLE resources that would otherwise leak. Without this:
+     *   - gattServer leaks an open BluetoothGattServer in the Bluetooth stack
+     *     (issue #24);
+     *   - advertiseCallback leaks an active LE advertising session (issue #10);
+     *   - connectedDevices holds stale BluetoothDevice references.
+     */
+    override fun handleOnDestroy() {
+        super.handleOnDestroy()
+        // Stop advertising first — stops new connections before we tear down the server.
+        val cb = advertiseCallback
+        if (cb != null) {
+            bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(cb)
+            advertiseCallback = null
+        }
+        val server = gattServer
+        if (server != null) {
+            for (device in connectedDevices.values.toList()) {
+                server.cancelConnection(device)
+            }
+            connectedDevices.clear()
+            server.close()
+            gattServer = null
+            txCharacteristic = null
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Advertising
     // -------------------------------------------------------------------------

@@ -48,6 +48,24 @@ class CallReliabilityPlugin : Plugin() {
         }
     }
 
+    /**
+     * Called by Capacitor when the bridge activity is destroyed — the guaranteed
+     * cleanup path for resources that would otherwise leak. Without this:
+     *   - networkManager leaks two ConnectivityManager.NetworkCallbacks toward
+     *     the 100-callback-per-UID hard limit (issue #8);
+     *   - micWatch leaks an AppOpsManager.startWatchingActive listener that can
+     *     transitively leak the Context (issue #23);
+     *   - micWatchExecutor leaks a non-daemon thread (issue #10).
+     */
+    override fun handleOnDestroy() {
+        super.handleOnDestroy()
+        networkManager?.close()
+        networkManager = null
+        micWatch?.uninstall()
+        micWatch = null
+        micWatchExecutor.shutdownNow()
+    }
+
     @PluginMethod
     fun ping(call: PluginCall) {
         val result = JSObject().apply {
