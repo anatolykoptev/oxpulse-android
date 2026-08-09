@@ -63,7 +63,12 @@ android {
             // silently produces an UNSIGNED release APK that looks like a
             // successful build. CI checks secrets separately (android.yml), but
             // local builds do not — this is the last line of defence.
-            if (!keystorePropertiesFile.exists()) {
+            //
+            // Only check when a release task is actually requested — the
+            // buildTypes block is evaluated during Gradle configuration, so
+            // without this guard a debug build would also trigger the check.
+            if (!keystorePropertiesFile.exists() &&
+                    gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }) {
                 throw new GradleException(
                     "keystore.properties not found at ${keystorePropertiesFile.absolutePath}. " +
                     "Release builds require signing material — see README.md § Signing."
