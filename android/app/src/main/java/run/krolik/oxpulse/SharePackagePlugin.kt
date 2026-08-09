@@ -29,6 +29,18 @@ class SharePackagePlugin : Plugin() {
         }
     }
 
+    /**
+     * Called by Capacitor when the bridge activity is destroyed — shuts down the
+     * shared IO_EXECUTOR. Without this the executor thread lives for the app's
+     * lifetime even after the plugin is destroyed (issue #10). The threads are
+     * daemon, so this is defence-in-depth rather than a hard leak, but shutdown
+     * is the correct lifecycle behaviour.
+     */
+    override fun handleOnDestroy() {
+        super.handleOnDestroy()
+        IO_EXECUTOR.shutdownNow()
+    }
+
     @PluginMethod
     fun share(call: PluginCall) {
         val ctx = context
