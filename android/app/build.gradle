@@ -10,13 +10,16 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
 // Dynamic versionCode derived from git history depth.
-// Falls back to 1 when git is unavailable (CI sandbox, fresh checkout).
+// FAILS the build when git is unavailable — a silent fallback to 1 produces
+// an APK that Play Store rejects on the second upload and a sideloaded APK
+// refuses to upgrade. Neither failure names the clone depth.
 def gitCount = { ->
     try {
         return ["git", "-C", rootDir.path, "rev-list", "--count", "HEAD"].execute().text.trim().toInteger()
     } catch (Exception e) {
-        println "[build.gradle] versionCode fallback=1 (git unavailable: ${e.message})"
-        return 1
+        throw new GradleException(
+            "versionCode requires git history (fetch-depth: 0 in CI). git unavailable: ${e.message}"
+        )
     }
 }()
 
@@ -55,6 +58,22 @@ android {
     }
     buildTypes {
         release {
+            // FAIL the release build if keystore.properties is absent. Without
+            // this guard, signingConfigs.release has null values and Gradle
+            // silently produces an UNSIGNED release APK that looks like a
+            // successful build. CI checks secrets separately (android.yml), but
+            // local builds do not — this is the last line of defence.
+            //
+            // Only check when a release task is actually requested — the
+            // buildTypes block is evaluated during Gradle configuration, so
+            // without this guard a debug build would also trigger the check.
+            if (!keystorePropertiesFile.exists() &&
+                    gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }) {
+                throw new GradleException(
+                    "keystore.properties not found at ${keystorePropertiesFile.absolutePath}. " +
+                    "Release builds require signing material — see README.md § Signing."
+                )
+            }
             signingConfig signingConfigs.release
             minifyEnabled true
             shrinkResources true
