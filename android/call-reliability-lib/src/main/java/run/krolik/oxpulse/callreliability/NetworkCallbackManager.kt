@@ -107,23 +107,21 @@ class NetworkCallbackManagerImpl(
         }
 
         // Phase 4: register VALIDATED callback only when caller provided a handler.
-        // M6 invariant: "both register or none" — if 2nd throws, revert 1st + reset.
+        // Graceful degradation: if the validated callback fails (e.g. 100-callback
+        // budget exceeded), keep the primary callback registered — connect/lost
+        // events still work, only captive-portal detection is disabled. Reverting
+        // the primary left NO callbacks registered and the validated callback could
+        // never be retried because the budget was still exceeded (issue #4).
         if (onValidatedChanged != null) {
             try {
                 connectivityManager.registerNetworkCallback(validatedRequest, validatedNetworkCallback)
                 isValidatedRegistered.set(true)
             } catch (e: Exception) {
-                // Revert primary callback to maintain "both register or none" invariant.
-                // Without this, isRegistered=true but only 1 callback is live; subsequent
-                // register() calls early-return and the 2nd callback is never retried.
-                try {
-                    connectivityManager.unregisterNetworkCallback(networkCallback)
-                } catch (inner: IllegalArgumentException) {
-                    Log.w(TAG, "Unexpected IAE reverting primary callback after 2nd registration failure.", inner)
-                }
-                isRegistered.set(false)
-                Log.w(TAG, "Exception registering validated network callback; reverted primary. Reconnection may be impaired.", e)
-                throw e
+                // Do NOT revert the primary — graceful degradation. The primary
+                // callback (connect/lost) is more important than captive-portal
+                // detection. isValidatedRegistered stays false so unregister()
+                // skips it.
+                Log.w(TAG, "Validated callback registration failed (budget exceeded?); primary remains registered. Captive-portal detection disabled.", e)
             }
         }
     }
