@@ -70,7 +70,15 @@ class VoiceCallForegroundService : Service() {
             acquireWakeLock()
         } catch (e: Exception) {
             Log.e(TAG, "FGS startup failed", e)
-            // The plugin caller will surface a denial reason via the bridge.
+            // Roll back whatever was acquired before stopSelf — without this,
+            // audioModeApplied could be true while wakeLock/audioFocusRequest are
+            // null, leaving the invariant audioModeApplied↔wakeLock↔focus broken.
+            // onDestroy would eventually clean up, but the state is inconsistent
+            // between the failure and onDestroy, and a concurrent updateVideo
+            // could observe it.
+            try { abandonAudioFocus() } catch (_: Exception) {}
+            try { restoreAudioMode() } catch (_: Exception) {}
+            try { releaseWakeLock() } catch (_: Exception) {}
             stopSelf()
             return START_NOT_STICKY
         }
@@ -171,6 +179,7 @@ class VoiceCallForegroundService : Service() {
         nm.createNotificationChannel(channel)
     }
 
+    @Synchronized
     private fun configureAudioMode() {
         val am = audioManager ?: return
         if (audioModeApplied) return
@@ -179,12 +188,14 @@ class VoiceCallForegroundService : Service() {
         audioModeApplied = true
     }
 
+    @Synchronized
     private fun restoreAudioMode() {
         if (!audioModeApplied) return
         audioManager?.mode = previousAudioMode
         audioModeApplied = false
     }
 
+    @Synchronized
     private fun requestAudioFocus() {
         val am = audioManager ?: return
         val attrs = AudioAttributes.Builder()
@@ -203,12 +214,14 @@ class VoiceCallForegroundService : Service() {
         audioFocusRequest = req
     }
 
+    @Synchronized
     private fun abandonAudioFocus() {
         val req = audioFocusRequest ?: return
         audioManager?.abandonAudioFocusRequest(req)
         audioFocusRequest = null
     }
 
+    @Synchronized
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = powerManager ?: return
@@ -218,6 +231,7 @@ class VoiceCallForegroundService : Service() {
         wakeLock = wl
     }
 
+    @Synchronized
     private fun releaseWakeLock() {
         wakeLock?.takeIf { it.isHeld }?.release()
         wakeLock = null
