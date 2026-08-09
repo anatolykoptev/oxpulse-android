@@ -66,6 +66,40 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --console=plain
 
+      # ── The gate that v0.1.0 needed and did not have ────────────────────────
+      # A green Gradle build does NOT mean the app can start. :app had no
+      # kotlin-android plugin, so its .kt sources were silently skipped and the
+      # APK shipped without run.krolik.oxpulse.MainActivity — the launcher class
+      # the manifest names. Signature verification passed, the release published,
+      # and the app would have crashed on the first tap.
+      #
+      # The manifest is NOT evidence here: it names MainActivity either way. Only
+      # the dex can answer it.
+      - name: assert-dex-classes
+        # Debug path only — on a tag the debug build is skipped, so the find
+        # below would either come up empty or pick up the release APK before it
+        # has been built.
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          [ -n "$APK" ] || { echo "::error::no APK to check"; exit 1; }
+          unzip -o -q -p "$APK" 'classes*.dex' > /tmp/all.dex
+          fail=0
+          for c in MainActivity SharePackagePlugin \
+                   callreliability/VoiceCallForegroundService \
+                   callreliability/CallReliabilityPlugin \
+                   mesh/MeshGattServerPlugin; do
+            if grep -aq "Lrun/krolik/oxpulse/$c;" /tmp/all.dex; then
+              echo "  ok      run.krolik.oxpulse.$c"
+            else
+              echo "::error::run.krolik.oxpulse.$c is ABSENT from the dex — the APK cannot work"
+              fail=1
+            fi
+          done
+          exit $fail
+
       - name: Upload debug APK
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
@@ -109,6 +143,28 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         working-directory: android
         run: ./gradlew assembleRelease bundleRelease --no-daemon --console=plain
+
+      - name: assert-dex-classes (release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          [ -n "$APK" ] || { echo "::error::no release APK to check"; exit 1; }
+          unzip -o -q -p "$APK" 'classes*.dex' > /tmp/rel.dex
+          fail=0
+          for c in MainActivity SharePackagePlugin \
+                   callreliability/VoiceCallForegroundService \
+                   callreliability/CallReliabilityPlugin \
+                   mesh/MeshGattServerPlugin; do
+            if grep -aq "Lrun/krolik/oxpulse/$c;" /tmp/rel.dex; then
+              echo "  ok      run.krolik.oxpulse.$c"
+            else
+              echo "::error::run.krolik.oxpulse.$c is ABSENT from the release dex"
+              fail=1
+            fi
+          done
+          exit $fail
 
       - name: Verify the APK is actually signed
         if: startsWith(github.ref, 'refs/tags/v')

@@ -1,4 +1,13 @@
 apply plugin: 'com.android.application'
+// Without this the .kt sources in this module are silently NOT COMPILED. Gradle
+// ignores .kt under src/main/java when the Kotlin plugin is absent, the build
+// succeeds, and the APK ships without MainActivity — the launcher class the
+// manifest points at. Measured on the v0.1.0 release APK: the dex string table
+// held every callreliability/ and mesh/ class (those modules apply the plugin
+// themselves) and neither run.krolik.oxpulse.MainActivity nor
+// SharePackagePlugin. The app could not start. Nothing in the build output
+// mentions the two skipped files.
+apply plugin: 'kotlin-android'
 
 // Dynamic versionCode derived from git history depth.
 // Falls back to 1 when git is unavailable (CI sandbox, fresh checkout).
@@ -19,6 +28,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace "run.krolik.oxpulse"
+    kotlinOptions { jvmTarget = '17' }
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "run.krolik.oxpulse"
