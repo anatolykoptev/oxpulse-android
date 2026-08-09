@@ -12,9 +12,22 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.io.File
+import java.util.concurrent.Executors
 
 @CapacitorPlugin(name = "SharePackage")
 class SharePackagePlugin : Plugin() {
+
+    private companion object {
+        /**
+         * Capacitor 6's Bridge exposes no public executor — `bridge.executor` does
+         * not resolve. One shared single-thread executor for the app's lifetime
+         * keeps the APK copy off the main thread, which is the property the caller
+         * below actually needs.
+         */
+        val IO_EXECUTOR = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "oxpulse-share-apk").apply { isDaemon = true }
+        }
+    }
 
     @PluginMethod
     fun share(call: PluginCall) {
@@ -32,7 +45,7 @@ class SharePackagePlugin : Plugin() {
         // The <root-path> provider was replaced (CVE-552 narrow) because it
         // granted URI access to / — any app with FLAG_GRANT_READ_URI_PERMISSION
         // on the Intent could construct arbitrary paths under that prefix.
-        bridge.executor.execute {
+        IO_EXECUTOR.execute {
             val out: File
             try {
                 val outDir = File(ctx.cacheDir, "apk-share").apply { mkdirs() }
