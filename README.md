@@ -29,13 +29,30 @@ The server, the signalling layer and the cryptography are not in this repository
 
 ## Install
 
-Releases are on the [releases page](../../releases). Verify before installing:
+Releases are on the [releases page](../../releases).
+
+**Check the file is the one CI built.** Download `apk-sha256.txt` alongside the APK:
 
 ```sh
 sha256sum -c apk-sha256.txt
 ```
 
-Android will warn about installing from an unknown source. That warning is correct and you should read it — it is the same warning you would get for anything not from a store.
+**Check who signed it.** The hash only proves the file is intact; the signature proves who
+made it. Every release is signed by this key, and it will not change:
+
+```
+SHA256: A1:CD:92:83:F2:3B:7C:AA:78:FB:62:BF:F3:BD:4E:C2:42:09:7C:18:C3:69:74:7A:6E:F0:9E:F7:42:0B:2E:52
+```
+
+```sh
+apksigner verify --print-certs app-release.apk
+```
+
+If that fingerprint differs from the one printed above, do not install the file — whatever
+you downloaded was not built and signed by this project.
+
+Android will warn about installing from an unknown source. That warning is correct and you
+should read it — it is the same warning you would get for anything not from a store.
 
 ## Build it yourself
 
