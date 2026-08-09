@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <!--
+          android:exported="true" is REQUIRED for the activity that owns the
+          android.intent.action.MAIN + android.intent.category.LAUNCHER
+          intent filter — without it Android refuses to launch the app from
+          the home screen. This is the documented Android API contract, not
+          a leak surface (the activity itself just renders the WebView for
+          the Capacitor SPA; no IPC entrypoint exposed). Required on Android
+          12+ where `exported` defaults to false.
+        -->
+        <!-- nosemgrep: java.android.security.exported_activity.exported_activity -->
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Phase 2: VoiceCallForegroundService — phoneCall|microphone|camera FGS for call reliability -->
+        <service
+            android:name="run.krolik.oxpulse.callreliability.VoiceCallForegroundService"
+            android:foregroundServiceType="phoneCall|microphone|camera"
+            android:exported="false"
+            android:stopWithTask="false" />
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- BLE permissions (Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+        tools:targetApi="s" />
+    <!-- BLE permissions (Android ≤11 legacy) -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+
+    <!-- Call Reliability — Foreground Service (Phase 2 onwards: phoneCall|microphone|camera).
+         Phase 1 plan initially chose mediaPlayback; reversed per nospeak production
+         proof that phoneCall FGS type does NOT require Telecom ConnectionService —
+         only MANAGE_OWN_CALLS install-time perm. See ~/.claude/memory/
+         feedback_fgs_type_strict_mode.md for full rationale.
+         `camera` is required for Android 14+ to keep the camera accessible when the
+         app is backgrounded during a video call. The bitmask is gated at runtime by
+         the CAMERA permission; the manifest must declare all possible types. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <!-- Phase 1: Mic permission group (Capacitor BridgeWebChromeClient RequestMultiplePermissions — both required) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- P0 (2026-06-11): CAMERA was MISSING — only RECORD_AUDIO was declared, so
+         the video path on the Capacitor shell could hard-fail when the WebView
+         bridge asks for RESOURCE_VIDEO_CAPTURE with no OS-level grant to back it.
+         required=false keeps the app installable on camera-less devices (the
+         call falls back to audio-only) — voice is the floor, video is optional. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- B4: battery-optimization exemption Intent (per Google Policy 2024+ —
+         permitted for "communication" app classified in Play Console). Requires
+         REQUEST_IGNORE_BATTERY_OPTIMIZATIONS for Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.
+         oxpulse-chat qualifies; document rationale in Play Store update notes per plan §7. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+</manifest>

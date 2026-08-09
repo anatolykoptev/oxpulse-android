@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Scope FileProvider URIs to the apk-share subdir of cacheDir only.
+         <root-path path="."> granted access to / via URI prefix and is a
+         security defect — any app receiving FLAG_GRANT_READ_URI_PERMISSION
+         could request arbitrary paths under that prefix. -->
+    <cache-path name="apk_share" path="apk-share/" />
+</paths>

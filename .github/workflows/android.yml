@@ -1,0 +1,132 @@
+name: android
+
+# PRs and pushes build a debug APK — proof the project still compiles.
+# A `v*` tag builds a SIGNED release APK + AAB and attaches them to the release.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read by default; the build job widens to `write` because the tag path
+# attaches the APK/AAB to the GitHub Release.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    # x86_64, NOT -arm. The Android SDK ships an x86-64 aapt2 and there is no
+    # arm64 Linux build of it — on an aarch64 host the build dies with
+    # "AAPT2 Daemon startup failed". Measured on our own arm64 box 2026-08-09.
+    # Public repo ⇒ GitHub-hosted minutes are free and unlimited.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # REQUIRED. app/build.gradle derives versionCode from
+          # `git rev-list --count HEAD`. The default shallow clone makes that
+          # return 1 on every run, so every release would carry versionCode=1:
+          # Play rejects the second upload and a sideloaded APK refuses to
+          # upgrade. Neither failure names the clone depth.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Capacitor packages
+        # The Gradle build includes @capacitor/* as local projects from
+        # node_modules (android/capacitor.settings.gradle), so this is a build
+        # dependency, not a convenience.
+        run: npm ci
+
+      - name: Capacitor sync
+        run: npx cap sync android
+
+      # ── PR / branch: unsigned debug build, the compile gate ─────────────────
+      - name: Build debug APK
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --console=plain
+
+      - name: Upload debug APK
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxpulse-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      # ── Tag: signed release ─────────────────────────────────────────────────
+      - name: Write signing config
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Fail loudly on an unset secret. Without this the keystore file is
+          # absent, build.gradle's `if (keystorePropertiesFile.exists())` guard
+          # silently skips signing, and the job ships an UNSIGNED release APK
+          # that looks like a successful build.
+          for v in KEYSTORE_B64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [ -n "${!v:-}" ] || { echo "::error::secret $v is not set"; exit 1; }
+          done
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/release.jks
+          # Never echo these — they are written, never printed.
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/keystore.properties
+
+      - name: Build signed release APK + AAB
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: android
+        run: ./gradlew assembleRelease bundleRelease --no-daemon --console=plain
+
+      - name: Verify the APK is actually signed
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          [ -n "$APK" ] || { echo "::error::no release APK produced"; exit 1; }
+          # An unsigned APK is a plausible-looking build artefact. Assert the
+          # signature exists rather than trusting the exit code above.
+          "$ANDROID_HOME"/build-tools/34.0.0/apksigner verify --print-certs "$APK"
+          sha256sum "$APK" | tee apk-sha256.txt
+
+      - name: Shred signing material
+        if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
+        run: rm -f android/release.jks android/keystore.properties
+
+      - name: Attach artefacts to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/bundle/release/*.aab
+            apk-sha256.txt
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

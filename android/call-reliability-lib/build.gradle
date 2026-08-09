@@ -1,0 +1,23 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace "run.krolik.oxpulse.callreliability"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+}
+
+dependencies {
+    implementation project(':capacitor-android')
+    implementation "androidx.appcompat:appcompat:$rootProject.ext.androidxAppCompatVersion"
+    implementation "androidx.core:core-ktx:$rootProject.ext.androidxCoreVersion"
+    implementation "androidx.activity:activity-ktx:$rootProject.ext.androidxActivityVersion"
+}

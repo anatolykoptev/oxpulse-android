@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">OxPulse</string>
+    <string name="title_activity_main">OxPulse</string>
+    <string name="package_name">run.krolik.oxpulse</string>
+    <string name="custom_url_scheme">run.krolik.oxpulse</string>
+</resources>

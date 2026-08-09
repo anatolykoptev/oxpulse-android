@@ -1,0 +1,11 @@
+node_modules/
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/app/src/main/assets/public/
+
+# Signing material never enters this repository. CI injects it from secrets.
+*.jks
+*.keystore
+keystore.properties
