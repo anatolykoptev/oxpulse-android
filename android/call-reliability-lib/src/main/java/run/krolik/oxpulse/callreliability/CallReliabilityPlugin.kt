@@ -86,9 +86,6 @@ class CallReliabilityPlugin : Plugin() {
         micWatch?.uninstall()
         micWatch = null
         micWatchExecutor.shutdownNow()
-    }        micWatch?.uninstall()
-        micWatch = null
-        micWatchExecutor.shutdownNow()
         // Same class as the leaks above: AudioRouteManager holds an
         // OnCommunicationDeviceChangedListener registered against AudioManager.
         // endCall() is the happy path; this is the one that runs when the
@@ -210,9 +207,6 @@ class CallReliabilityPlugin : Plugin() {
     @PluginMethod
     fun endCall(call: PluginCall) {
         // Phase 4 Task 4.1: remove mic-revoke watcher before FGS stops.
-        micWatch?.uninstall()
-        micWatch = null
-        try {        // Phase 4 Task 4.1: remove mic-revoke watcher before FGS stops.
         micWatch?.uninstall()
         micWatch = null
         // Release the route override and the device listener BEFORE the FGS drops
