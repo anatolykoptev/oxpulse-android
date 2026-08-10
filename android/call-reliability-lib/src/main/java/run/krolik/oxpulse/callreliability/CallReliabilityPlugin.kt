@@ -305,7 +305,16 @@ class CallReliabilityPlugin : Plugin() {
                 })
             },
         )
-        networkManager?.register()
+        // register() can throw SecurityException on some OEM ROMs if
+        // NETWORK_STATE permission is missing. Without this catch the plugin
+        // call crashes instead of gracefully rejecting (issue #26).
+        try {
+            networkManager?.register()
+        } catch (e: SecurityException) {
+            networkManager = null
+            call.reject("network_monitor_failed_permission", e)
+            return
+        }
         call.resolve()
     }
 
