@@ -58,6 +58,12 @@ jobs:
         run: npm ci
 
       - name: Capacitor sync
+        # CAP_SERVER_URL must be set — capacitor.config.ts throws if it's unset
+        # to prevent dev/test builds from silently loading production content.
+        # CI builds against production (the only deployed instance); release
+        # tag builds set it in the Write signing config step environment.
+        env:
+          CAP_SERVER_URL: ${{ vars.CAP_SERVER_URL || 'https://oxpulse.chat' }}
         run: npx cap sync android
 
       # ── PR / branch: unsigned debug build, the compile gate ─────────────────

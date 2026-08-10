@@ -64,6 +64,10 @@ class SharePackagePlugin : Plugin() {
                 out = File(outDir, "oxpulse.apk")
                 File(apkPath).copyTo(out, overwrite = true)
             } catch (e: Exception) {
+                // Log the exception type + message before rejecting — without this,
+                // "apk-copy-failed" gives no indication of root cause (disk full,
+                // permission denied, read-only filesystem, etc.) (issue #17).
+                android.util.Log.e("SharePackagePlugin", "APK copy failed: ${e.javaClass.simpleName}: ${e.message}", e)
                 call.reject("apk-copy-failed", e)
                 return@execute
             }

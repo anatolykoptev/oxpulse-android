@@ -35,6 +35,12 @@ class VoiceCallForegroundService : Service() {
         super.onCreate()
         audioManager = getSystemService()
         powerManager = getSystemService()
+        if (audioManager == null) {
+            Log.w(TAG, "AudioManager is null — audio mode configuration will be skipped (OEM ROM issue?)")
+        }
+        if (powerManager == null) {
+            Log.w(TAG, "PowerManager is null — wakeLock will be skipped (OEM ROM issue?)")
+        }
         createChannelIfNeeded()
     }
 
@@ -58,8 +64,24 @@ class VoiceCallForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        // Update-video is a pure foreground-service-type refresh; no lifecycle side-effects.
+        // Update-video is a foreground-service-type refresh. Validate that the
+        // service is in an active call state before updating — if the service was
+        // killed and restarted, resources (audio/wake/focus) may not be held.
+        // Without this, updateVideo() could promote to foreground without the
+        // core call resources, leaving the call unprotected (issues #15, #20).
         if (intent?.action == ACTION_UPDATE_VIDEO) {
+            if (!audioModeApplied || wakeLock?.isHeld != true) {
+                Log.w(TAG, "ACTION_UPDATE_VIDEO received but call resources not held (audioModeApplied=$audioModeApplied, wakeLockHeld=${wakeLock?.isHeld}) — re-acquiring")
+                try {
+                    configureAudioMode()
+                    requestAudioFocus()
+                    acquireWakeLock()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Resource re-acquisition failed during ACTION_UPDATE_VIDEO", e)
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+            }
             return START_NOT_STICKY
         }
 
@@ -82,7 +104,12 @@ class VoiceCallForegroundService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        return START_NOT_STICKY  // Don't restart-with-empty-intent if killed
+        // START_REDELIVER_INTENT: if Android kills the service mid-call (low memory),
+        // restart it with the original intent so audio/wake/focus are re-acquired.
+        // Without this, a kill leaves the JS layer thinking the call is active but
+        // with no native protection — phone sleeps, call drops (issue #9).
+        // ACTION_HANGUP and ACTION_UPDATE_VIDEO still return START_NOT_STICKY above.
+        return START_REDELIVER_INTENT
     }
 
     override fun onDestroy() {

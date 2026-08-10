@@ -30,7 +30,13 @@ class MicWatch(
     private var listener: AppOpsManager.OnOpActiveChangedListener? = null
 
     fun install() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return  // API 30+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            // API 23-29: startWatchingActive is API 30+ only. Mid-call revocation
+            // detection is unavailable on this cohort — the micRevoked event will
+            // never fire. Log so the limitation is visible in logcat (issue #12).
+            Log.w("MicWatch", "Mid-call RECORD_AUDIO revocation detection unavailable on API ${Build.VERSION.SDK_INT} (requires API 30+)")
+            return
+        }
         val appOps = context.getSystemService<AppOpsManager>() ?: return
         listener = AppOpsManager.OnOpActiveChangedListener { op, _, _, active ->
             if (op != AppOpsManager.OPSTR_RECORD_AUDIO) return@OnOpActiveChangedListener
