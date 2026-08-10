@@ -1,0 +1,47 @@
+# Release pipeline — release-please opens a release PR on every conventional-commit
+# push to main. Merging that PR creates the tag + GitHub Release with changelog.
+# The App-created tag then triggers the existing android.yml tag path, which builds
+# the signed APK/AAB and attaches them to the release.
+#
+# Why the App token (not GITHUB_TOKEN): a GITHUB_TOKEN-created tag does NOT trigger
+# other workflows. The krolik-release-bot App token makes the tag push eligible to
+# fire android.yml's `on: push: tags: ['v*']` path. Without this, the APK would
+# never build on release.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  release-please:
+    name: Release PR / tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      major: ${{ steps.release.outputs.major }}
+      minor: ${{ steps.release.outputs.minor }}
+      patch: ${{ steps.release.outputs.patch }}
+    steps:
+      - name: Mint App token
+        uses: actions/create-github-app-token@v2
+        id: bot-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Run release-please
+        uses: googleapis/release-please-action@v5.0.0
+        id: release
+        with:
+          token: ${{ steps.bot-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
