@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Explicit color definitions for styles.xml references. Previously these
+         were inherited from the parent theme (Theme.AppCompat.Light.DarkActionBar)
+         which worked but was fragile — a parent theme change would break the build.
+         Values match AppCompat's default Light.DarkActionBar palette (issue #25). -->
+    <color name="colorPrimary">#3F51B5</color>
+    <color name="colorPrimaryDark">#303F9F</color>
+    <color name="colorAccent">#FF4081</color>
+</resources>

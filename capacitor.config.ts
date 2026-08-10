@@ -8,7 +8,10 @@ const config: CapacitorConfig = {
   webDir: 'www',
   server: {
     androidScheme: 'https',
-    url: process.env.CAP_SERVER_URL || 'https://oxpulse.chat',
+    // Fail build if CAP_SERVER_URL is unset — without this, dev/test builds
+    // silently load production content from oxpulse.chat, which makes it
+    // impossible to test changes against a staging server (issue #11).
+    url: process.env.CAP_SERVER_URL ?? (() => { throw new Error('CAP_SERVER_URL is not set — set it to your server URL (e.g. https://staging.oxpulse.chat)') })(),
     cleartext: false,
     allowNavigation: ['oxpulse.chat', '*.krolik.run'],
   },
