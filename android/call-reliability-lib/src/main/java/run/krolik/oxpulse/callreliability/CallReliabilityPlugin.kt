@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.result.ActivityResult
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -28,6 +29,27 @@ class CallReliabilityPlugin : Plugin() {
     // Single-threaded executor keeps AppOps callback off the main thread.
     private var micWatch: MicWatch? = null
     private val micWatchExecutor = Executors.newSingleThreadExecutor()
+
+    // Audio output routing. Created on first use rather than in load(): the
+    // web-side capability probe can run before or after startCall(), and
+    // registering an AudioManager listener for a session that never happens
+    // costs a callback for nothing.
+    private var audioRoute: AudioRouteManager? = null
+
+    private fun audioRouteManager(): AudioRouteManager {
+        audioRoute?.let { return it }
+        val created = AudioRouteManager(context)
+        created.onRouteChanged = { active ->
+            // The OS moved the route on its own — a headset connected, or an OEM
+            // audio policy demoted the session. The web layer needs this to
+            // correct what it displays and to count the drift; without it the UI
+            // keeps showing a route that stopped being true.
+            notifyListeners("audioRouteChanged", JSObject().apply { put("active", active) })
+        }
+        created.start()
+        audioRoute = created
+        return created
+    }
 
     override fun load() {
         super.load()
@@ -64,6 +86,15 @@ class CallReliabilityPlugin : Plugin() {
         micWatch?.uninstall()
         micWatch = null
         micWatchExecutor.shutdownNow()
+    }        micWatch?.uninstall()
+        micWatch = null
+        micWatchExecutor.shutdownNow()
+        // Same class as the leaks above: AudioRouteManager holds an
+        // OnCommunicationDeviceChangedListener registered against AudioManager.
+        // endCall() is the happy path; this is the one that runs when the
+        // activity dies without it.
+        audioRoute?.stop()
+        audioRoute = null
     }
 
     @PluginMethod
@@ -142,11 +173,52 @@ class CallReliabilityPlugin : Plugin() {
         }
     }
 
+    // ── Audio output routing ──────────────────────────────────────────────────
+
+    @PluginMethod
+    fun getAudioRoutes(call: PluginCall) {
+        // A method absent from this class is not reachable from JS at all —
+        // which is exactly what the web-side capability probe reports as
+        // `method_missing` on APKs built before this line existed, so users on
+        // those builds correctly see no control instead of a fake one.
+        val mgr = audioRouteManager()
+        val routes = JSArray()
+        mgr.availableRoutes().forEach { routes.put(it) }
+        call.resolve(
+            JSObject().apply {
+                put("routes", routes)
+                put("active", mgr.activeRoute())
+            }
+        )
+    }
+
+    @PluginMethod
+    fun setAudioRoute(call: PluginCall) {
+        val route = call.getString("route")
+        if (route.isNullOrEmpty()) {
+            call.reject("route is required")
+            return
+        }
+        // Resolve with the OS READ-BACK, never with `route`. Echoing the request
+        // would make the client's requested/applied counters agree by
+        // construction and measure nothing at all.
+        call.resolve(
+            JSObject().apply { put("active", audioRouteManager().setRoute(route)) }
+        )
+    }
+
     @PluginMethod
     fun endCall(call: PluginCall) {
         // Phase 4 Task 4.1: remove mic-revoke watcher before FGS stops.
         micWatch?.uninstall()
         micWatch = null
+        try {        // Phase 4 Task 4.1: remove mic-revoke watcher before FGS stops.
+        micWatch?.uninstall()
+        micWatch = null
+        // Release the route override and the device listener BEFORE the FGS drops
+        // the audio mode, so the next call does not inherit this call's speaker.
+        audioRoute?.stop()
+        audioRoute = null
         try {
             VoiceCallForegroundService.stop(context)
         } catch (_: Exception) {
