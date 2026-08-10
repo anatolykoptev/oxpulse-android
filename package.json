@@ -1,6 +1,6 @@
 {
   "name": "oxpulse-android",
-  "version": "0.0.0",
+  "version": "0.1.2",
   "private": true,
   "description": "Android shell for OxPulse — native call-reliability around the OxPulse web app",
   "license": "AGPL-3.0-only",
