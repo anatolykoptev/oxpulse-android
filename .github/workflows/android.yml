@@ -125,6 +125,63 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+      # ── THROWAWAY PROBE (do not merge): release-mode build on PRs ───────────
+      - name: Probe - throwaway keystore
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PW=$(openssl rand -hex 16)
+          keytool -genkeypair -keystore android/probe.jks -storetype PKCS12 \
+            -alias probe -keyalg RSA -keysize 2048 -validity 2 \
+            -dname "CN=throwaway-probe" -storepass "$PW" -keypass "$PW"
+          {
+            echo "storeFile=$PWD/android/probe.jks"
+            echo "storePassword=$PW"
+            echo "keyAlias=probe"
+            echo "keyPassword=$PW"
+          } > android/keystore.properties
+
+      - name: Probe - assembleRelease (minified)
+        if: github.event_name == 'pull_request'
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --no-daemon --console=plain
+
+      - name: Probe - R8 marker, dex assertion, sizes, buildEnvironment
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          [ -n "$APK" ] || { echo "::error::no release APK"; exit 1; }
+          unzip -o -q -p "$APK" 'classes*.dex' > /tmp/probe.dex
+          MARK=$(strings -a /tmp/probe.dex | grep '~~R8' | head -1 || true)
+          echo "R8 marker: $MARK"
+          echo "$MARK" | grep -q '"version":"8.10.21"' || { echo "::error::R8 marker lacks version 8.10.21"; exit 1; }
+          fail=0
+          for c in MainActivity SharePackagePlugin \
+                   callreliability/VoiceCallForegroundService \
+                   callreliability/CallReliabilityPlugin \
+                   mesh/MeshGattServerPlugin; do
+            if grep -aq "Lrun/krolik/oxpulse/$c;" /tmp/probe.dex; then
+              echo "  ok      release run.krolik.oxpulse.$c"
+            else
+              echo "::error::run.krolik.oxpulse.$c ABSENT from release dex"; fail=1
+            fi
+          done
+          echo "release APK bytes: $(stat -c %s "$APK")"
+          echo "debug APK bytes:   $(stat -c %s $(find android/app/build/outputs/apk/debug -name '*.apk' | head -1))"
+          (cd android && ./gradlew -q buildEnvironment --console=plain | grep 'com.android.tools:r8') || true
+          exit $fail
+
+      - name: Probe - upload release APK (throwaway-signed, NOT for distribution)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxpulse-release-probe-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
       # ── Tag: signed release ─────────────────────────────────────────────────
       - name: Write signing config
         if: startsWith(github.ref, 'refs/tags/v')
