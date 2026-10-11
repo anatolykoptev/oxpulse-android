@@ -1,15 +1,23 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 
 buildscript {
-    
+    // Single Kotlin version for every module. Must be defined here: variables.gradle is
+    // applied after buildscript{}. Capacitor's module reads rootProject.ext.kotlin_version
+    // when present (else falls back to 1.9.10), so it follows this value.
+    ext.kotlin_version = '2.2.20'
+
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
+        // TEMPORARY: raises the resolved R8 to 8.10.21 (Gradle picks the highest of the two
+        // R8 versions on this classpath; AGP 8.2.1 bundles 8.2.42). Kotlin 2.2 metadata needs
+        // R8 >= 8.10.21. Remove once AGP bundles a newer R8 (the planned AGP 8.13 bump).
+        classpath 'com.android.tools:r8:8.10.21'
         classpath 'com.android.tools.build:gradle:8.2.1'
         classpath 'com.google.gms:google-services:4.4.0'
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files

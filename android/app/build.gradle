@@ -31,7 +31,12 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace "run.krolik.oxpulse"
-    kotlinOptions { jvmTarget = '17' }
+    // Explicit so the Kotlin jvmTarget below cannot mismatch Java; capacitor.build.gradle
+    // sets the same but is generated and rewritten by `cap sync`.
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "run.krolik.oxpulse"
@@ -79,6 +84,14 @@ android {
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+}
+
+// kotlinOptions {} is deprecated with ERROR level since KGP 2.2; compilerOptions is the replacement.
+// Fully qualified so the Groovy script needs no import.
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
 
