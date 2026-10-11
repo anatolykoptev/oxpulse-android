@@ -11,6 +11,10 @@ buildscript {
         mavenCentral()
     }
     dependencies {
+        // TEMPORARY: AGP 8.2.1 bundles R8 8.2.42, which cannot read Kotlin 2.2 metadata
+        // (Kotlin 2.2 needs R8 >= 8.10.21). Must be listed BEFORE the AGP classpath so it
+        // wins over the bundled copy. Remove once AGP bundles R8 >= 8.10 (P2 / AGP 8.13).
+        classpath 'com.android.tools:r8:8.10.21'
         classpath 'com.android.tools.build:gradle:8.2.1'
         classpath 'com.google.gms:google-services:4.4.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
