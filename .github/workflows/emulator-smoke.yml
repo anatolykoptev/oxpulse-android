@@ -24,16 +24,17 @@ jobs:
           - api: 36
             arch: x86_64
             gpu: guest
-          - api: 36
+          - api: 35
             arch: x86_64
             gpu: swiftshader_indirect
             diag: chrome
+            url: https://oxpulse.chat
             suffix: -chromeprobe
           - api: 35
             arch: x86_64
             gpu: swiftshader_indirect
-            diag: bt
-            suffix: -btprobe
+            audio: none
+            suffix: -audioon
     steps:
       - name: Enable KVM
         run: |
@@ -162,7 +163,7 @@ jobs:
             note "bt probe: $(tail -1 "$OUT/bt-probe.txt")"
           fi
           if [ "${DIAG:-}" = chrome ]; then
-            adb shell am start -a android.intent.action.VIEW -d https://example.com > "$OUT/chrome-probe-start.txt" 2>&1
+            adb shell am start -a android.intent.action.VIEW -d "$PROBE_URL" > "$OUT/chrome-probe-start.txt" 2>&1
             for i in $(seq 1 10); do echo "$(date +%T) state=$(adb get-state 2>&1 | head -1) qemu=$(pgrep -fc 'qemu-system|emulator64' || true)" >> "$OUT/chrome-probe.txt"; sleep 3; done
             note "chrome probe: $(tail -1 "$OUT/chrome-probe.txt")"
             adb shell input keyevent KEYCODE_HOME
@@ -308,8 +309,8 @@ jobs:
           ram-size: 4096M
           heap-size: 512M
           emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: env DIAG=${{ matrix.diag }} bash smoke.sh ${{ matrix.api }}
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot ${{ matrix.audio == 'none' && ' ' || '-noaudio' }} -no-boot-anim -camera-back none -camera-front none
+          script: env DIAG=${{ matrix.diag }} PROBE_URL=${{ matrix.url || 'https://example.com' }} bash smoke.sh ${{ matrix.api }}
 
       - name: Host diagnostics
         if: always()
