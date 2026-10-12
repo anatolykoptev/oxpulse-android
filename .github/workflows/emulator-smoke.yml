@@ -23,17 +23,14 @@ jobs:
             gpu: swiftshader_indirect
           - api: 36
             arch: x86_64
-            gpu: guest
+            gpu: swiftshader_indirect
+            extra: -feature -Vulkan
+            suffix: -novulkan
           - api: 35
             arch: x86_64
             gpu: swiftshader_indirect
-            btoff: '1'
-            suffix: -btoff
-          - api: 36
-            arch: x86_64
-            gpu: swiftshader_indirect
-            btoff: '1'
-            suffix: -btoff
+            extra: -feature -Vulkan
+            suffix: -novulkan
     steps:
       - name: Enable KVM
         run: |
@@ -313,8 +310,8 @@ jobs:
           ram-size: 4096M
           heap-size: 512M
           emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot ${{ matrix.audio == 'none' && ' ' || '-noaudio' }} -no-boot-anim -camera-back none -camera-front none
-          script: env BTOFF=${{ matrix.btoff }} bash smoke.sh ${{ matrix.api }}
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim ${{ matrix.extra }} -camera-back none -camera-front none
+          script: bash smoke.sh ${{ matrix.api }}
 
       - name: Host diagnostics
         if: always()
