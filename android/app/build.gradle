@@ -23,6 +23,17 @@ def gitCount = { ->
     }
 }()
 
+// Added to the commit count so versionCode stays monotonic across releases.
+// Android refuses to install a lower versionCode over a higher one, and the
+// only way back is uninstall, which wipes the WebView's IndexedDB (device
+// identity). The Capacitor 6 line shipped codes below 1000; this line starts
+// above them so it installs over v0.1.x in place. A maintenance release cut
+// from that older line must use a larger offset (for example 2000) so it
+// still installs over any build from this one. Additive rather than
+// max(gitCount, 1000): max would pin every build to 1000 until the repo
+// has 1000 commits, making a second release unable to upgrade the first.
+def versionCodeOffset = 1000
+
 def keystorePropertiesFile = rootProject.file("keystore.properties")
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
@@ -30,25 +41,25 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace "run.krolik.oxpulse"
+    namespace = "run.krolik.oxpulse"
     // Explicit so the Kotlin jvmTarget below cannot mismatch Java; capacitor.build.gradle
     // sets the same but is generated and rewritten by `cap sync`.
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
-    compileSdk rootProject.ext.compileSdkVersion
+    compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "run.krolik.oxpulse"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode gitCount
+        versionCode gitCount + versionCodeOffset
         versionName "1.0.0+" + gitCount
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
     signingConfigs {
@@ -91,7 +102,7 @@ android {
 // Fully qualified so the Groovy script needs no import.
 kotlin {
     compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
     }
 }
 
