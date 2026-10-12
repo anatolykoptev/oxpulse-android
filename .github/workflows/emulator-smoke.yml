@@ -24,15 +24,19 @@ jobs:
           - api: 36
             arch: x86_64
             gpu: swiftshader_indirect
-            diag: chrome
-            url: https://oxpulse.chat
-            suffix: -chrome-oxpulse
+            wifioff: '1'
+            suffix: -wifioff-a
           - api: 36
             arch: x86_64
             gpu: swiftshader_indirect
-            diag: chrome
-            url: https://example.com
-            suffix: -chrome-example
+            wifioff: '1'
+            suffix: -wifioff-b
+          - api: 36
+            arch: x86_64
+            gpu: swiftshader_indirect
+            wifioff: '1'
+            wvflags: '_ --disable-quic'
+            suffix: -wifioff-noquic
     steps:
       - name: Enable KVM
         run: |
@@ -177,6 +181,18 @@ jobs:
             adb shell svc bluetooth enable > "$OUT/bt-probe-start.txt" 2>&1
             for i in $(seq 1 10); do echo "$(date +%T) state=$(adb get-state 2>&1 | head -1) qemu=$(pgrep -fc 'qemu-system|emulator64' || true)" >> "$OUT/bt-probe.txt"; sleep 3; done
             note "bt probe: $(tail -1 "$OUT/bt-probe.txt")"
+          fi
+          if [ -n "${WVFLAGS:-}" ]; then
+            adb root >/dev/null 2>&1; adb wait-for-device
+            adb shell "echo '$WVFLAGS' > /data/local/tmp/webview-command-line; chmod 644 /data/local/tmp/webview-command-line"
+            note "webview-command-line: $(adb shell cat /data/local/tmp/webview-command-line)"
+            adb unroot >/dev/null 2>&1; adb wait-for-device
+          fi
+          if [ "${WIFIOFF:-}" = 1 ]; then
+            adb shell svc wifi disable 2>&1 | sed 's/^/wifioff: /'
+            adb shell svc data enable 2>&1 | sed 's/^/wifioff: /'
+            sleep 8
+            note "wifi disabled, mobile data on: ping=$(adb shell ping -c 2 -W 3 8.8.8.8 2>&1 | tail -2 | tr '\n' ' ')"
           fi
           if [ "${DIAG:-}" = chrome ]; then
             adb root >/dev/null 2>&1; adb wait-for-device
@@ -330,7 +346,7 @@ jobs:
           heap-size: 512M
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim ${{ matrix.extra }} -camera-back none -camera-front none
-          script: env DIAG=${{ matrix.diag }} PROBE_URL=${{ matrix.url }} bash smoke.sh ${{ matrix.api }}
+          script: env WIFIOFF=${{ matrix.wifioff }} WVFLAGS="${{ matrix.wvflags }}" bash smoke.sh ${{ matrix.api }}
 
       - name: Host diagnostics
         if: always()
