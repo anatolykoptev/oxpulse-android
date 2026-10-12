@@ -66,6 +66,12 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
+    <!-- @capacitor-community/bluetooth-le declares ACCESS_COARSE_LOCATION without a
+         cap. Pre-API-31 scanning needs location; API 31+ scans with
+         neverForLocation (BleClient.initialize androidNeverForLocation), so
+         cap COARSE the same way as FINE. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="30" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
     <!-- Call Reliability — Foreground Service (Phase 2 onwards: phoneCall|microphone|camera).
