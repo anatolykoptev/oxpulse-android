@@ -280,6 +280,10 @@ jobs:
         if: always()
         run: |
           { echo '--- dmesg tail'; sudo dmesg 2>&1 | tail -60; echo '--- android tmp'; ls -la /tmp/android-*/ 2>&1 | head -30; echo '--- free'; free -m; } > out/host-diagnostics.txt 2>&1 || true
+          mkdir -p out/emu-crash
+          cp -r /tmp/android-*/emu-crash-*.db out/emu-crash/ 2>/dev/null || true
+          find out/emu-crash -type f \( -name '*.dmp' -o -name '*.txt' \) -exec sh -c 'echo "== $1"; strings -n 8 "$1" | grep -E "emulator|qemu|libvk|swiftshader|gfxstream|Signal|signal|\.so" | head -40' _ {} \; > out/emu-crash-strings.txt 2>&1 || true
+          ls -laR out/emu-crash > out/emu-crash-ls.txt 2>&1 || true
 
       - name: Summary
         if: always()
