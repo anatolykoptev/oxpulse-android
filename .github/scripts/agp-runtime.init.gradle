@@ -1,6 +1,7 @@
 // Prints the AGP version each Gradle project's Android plugin was actually
 // loaded from. `buildEnvironment` lists what a project's buildscript DECLARES;
-// this reports what ran. Used by the "Resolved AGP" CI step.
+// this reports what ran. Used by the "assert-agp-runtime" CI step, which compares the full
+// project list against the expected one.
 gradle.afterProject { p ->
     ['com.android.application', 'com.android.library'].each { id ->
         if (p.plugins.hasPlugin(id)) {
