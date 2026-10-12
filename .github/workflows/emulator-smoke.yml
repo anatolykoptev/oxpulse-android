@@ -72,6 +72,11 @@ jobs:
           FAIL=0
           mkdir -p "$OUT"
 
+          # Host-side emulator liveness/memory monitor (diagnoses emulator death).
+          ( while :; do echo "$(date +%T) qemu_procs=$(pgrep -fc 'qemu-system|emulator64' || true) $(free -m | sed -n 2p | tr -s ' ')"; sleep 3; done ) > "$OUT/host-monitor.txt" 2>&1 &
+          MONPID=$!
+          trap 'kill $MONPID 2>/dev/null' EXIT
+
           # Bound every adb call so a dead emulator fails the run instead of hanging it.
           ADB="$(command -v adb)"
           adb() { timeout 120 "$ADB" "$@"; }
@@ -263,6 +268,11 @@ jobs:
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash smoke.sh ${{ matrix.api }}
+
+      - name: Host diagnostics
+        if: always()
+        run: |
+          { echo '--- dmesg tail'; sudo dmesg 2>&1 | tail -60; echo '--- android tmp'; ls -la /tmp/android-*/ 2>&1 | head -30; echo '--- free'; free -m; } > out/host-diagnostics.txt 2>&1 || true
 
       - name: Summary
         if: always()
