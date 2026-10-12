@@ -129,6 +129,13 @@ jobs:
             awk -v p="${pid:-NONE}" '$3==p || /Capacitor|chromium|OxPulse/' "$OUT/logcat-$1-full.txt" > "$OUT/logcat-$1-filtered.txt"
           }
 
+          # --- idle probe: does the emulator survive 60s with nothing running? ---
+          for i in $(seq 1 12); do
+            echo "$(date +%T) state=$(adb get-state 2>&1 | head -1) qemu=$(pgrep -fc 'qemu-system|emulator64' || true)" >> "$OUT/idle-probe.txt"
+            sleep 5
+          done
+          note "idle probe: $(tail -1 "$OUT/idle-probe.txt")"
+
           # --- environment ---
           adb shell getprop ro.build.version.sdk | tr -d '\r' | sed 's/^/sdk=/' | tee -a "$OUT/RESULT.txt"
           adb shell dumpsys webviewupdate 2>/dev/null | grep -iE 'current|package|version' > "$OUT/webview-impl.txt" || true
