@@ -1,0 +1,254 @@
+name: emulator-smoke
+
+# One-off pre-promotion smoke test of the v0.1.3 prerelease on emulators.
+# Not for merge. Runs only for the PR from ci/emulator-smoke-0.1.3.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.head_ref == 'ci/emulator-smoke-0.1.3'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 24
+            arch: x86
+          - api: 36
+            arch: x86_64
+    steps:
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Download release APKs
+        run: |
+          mkdir -p apks out
+          base=https://github.com/anatolykoptev/oxpulse-android/releases/download
+          curl -fsSL -o apks/v012.apk "$base/v0.1.2/app-release.apk"
+          curl -fsSL -o apks/v013.apk "$base/v0.1.3/app-release.apk"
+          curl -fsSL -o apks/v013-apk-sha256.txt "$base/v0.1.3/apk-sha256.txt" || true
+          sha256sum apks/*.apk | tee out/apk-sha256.txt
+          cat apks/v013-apk-sha256.txt || true
+
+      - name: Static APK evidence (signer, config)
+        run: |
+          apksigner="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          for v in v012 v013; do
+            "$apksigner" verify --print-certs "apks/$v.apk" > "out/cert-$v.txt" 2>&1 || true
+            echo "== $v ==" ; cat "out/cert-$v.txt"
+            unzip -p "apks/$v.apk" assets/capacitor.config.json > "out/capacitor-config-$v.json" 2>/dev/null || true
+          done
+          s12="$(grep -m1 'certificate SHA-256 digest' out/cert-v012.txt | awk '{print $NF}')"
+          s13="$(grep -m1 'certificate SHA-256 digest' out/cert-v013.txt | awk '{print $NF}')"
+          echo "signer v0.1.2: $s12"
+          echo "signer v0.1.3: $s13"
+          if [ -z "$s12" ] || [ "$s12" != "$s13" ]; then
+            echo "HARD FAIL: signer digests differ or are empty" | tee -a out/RESULT.txt
+            exit 1
+          fi
+          echo "signer digests match: $s12" | tee -a out/RESULT.txt
+          grep -o '"appendUserAgent"[^,}]*' out/capacitor-config-v013.json | tee -a out/RESULT.txt || echo "no appendUserAgent in v0.1.3 packaged config" | tee -a out/RESULT.txt
+
+      - name: Write smoke script
+        run: |
+          cat > smoke.sh <<'SMOKE_EOF'
+          #!/usr/bin/env bash
+          set -u
+          API="$1"
+          PKG=run.krolik.oxpulse
+          OUT=out
+          WORK="$(mktemp -d)"
+          FAIL=0
+          mkdir -p "$OUT"
+
+          note() { echo "[api$API] $*" | tee -a "$OUT/RESULT.txt"; }
+          hard() { echo "[api$API] HARD FAIL: $*" | tee -a "$OUT/RESULT.txt"; FAIL=1; }
+          shot() { adb exec-out screencap -p > "$OUT/$1"; note "screenshot $1 ($(stat -c %s "$OUT/$1") bytes)"; }
+          pidnow() { adb shell pidof "$PKG" | tr -d '\r'; }
+          # Activity lifecycle events for MainActivity (create/destroy/relaunch) from the events buffer.
+          evcount() { adb logcat -b events -d 2>/dev/null | grep -E 'create_activity|destroy_activity|relaunch_activity' | grep -c 'MainActivity'; }
+          capcount() { adb logcat -d -s Capacitor:V 2>/dev/null | grep -cE 'Loading app at|Starting BridgeActivity'; }
+          rotation() { adb shell dumpsys window 2>/dev/null | grep -m1 -oE 'mCurrentRotation=[A-Za-z0-9_]+' ; }
+
+          pkginfo() {
+            adb shell dumpsys package "$PKG" | grep -E "versionCode|versionName|firstInstallTime|lastUpdateTime" | sed 's/^ *//' > "$OUT/dumpsys-$1.txt"
+            note "dumpsys $1: $(tr '\n' ' ' < "$OUT/dumpsys-$1.txt")"
+          }
+          field() { grep -m1 -oE "$2=[^ ]+( [0-9:]+)?" "$OUT/dumpsys-$1.txt" | head -1; }
+
+          snapshot() {
+            adb root >/dev/null 2>&1; adb wait-for-device
+            rm -rf "$WORK/wv-$1"; mkdir -p "$WORK/wv-$1"
+            adb pull "/data/data/$PKG/app_webview" "$WORK/wv-$1/" >/dev/null 2>&1 || note "snapshot $1: app_webview pull failed or absent"
+            ( cd "$WORK/wv-$1" && find . -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum ) > "$OUT/webview-$1.sha256"
+            ( cd "$WORK/wv-$1" && find . -type f -printf '%s\t%p\n' 2>/dev/null | sort -k2 ) > "$OUT/webview-$1.sizes.txt"
+            awk '{print $2}' "$OUT/webview-$1.sha256" | sort > "$OUT/webview-$1.paths.txt"
+            adb shell "ls -lR /data/data/$PKG" > "$OUT/datadir-$1.txt" 2>&1 || true
+            note "snapshot $1: $(wc -l < "$OUT/webview-$1.paths.txt") files under app_webview ($(grep -ciE 'Local Storage' "$OUT/webview-$1.paths.txt") Local Storage, $(grep -ciE 'IndexedDB' "$OUT/webview-$1.paths.txt") IndexedDB)"
+          }
+
+          crashscan() {
+            local f="$1" label="$2"
+            local fatal anr rt
+            fatal="$(grep -A4 'FATAL EXCEPTION' "$f" | grep -c "$PKG")"
+            anr="$(grep -c "ANR in $PKG" "$f")"
+            rt="$(grep 'AndroidRuntime' "$f" | grep -c "$PKG")"
+            note "$label crash scan: fatal(pkg)=$fatal anr(pkg)=$anr androidruntime(pkg)=$rt"
+            if [ "$fatal" != 0 ] || [ "$anr" != 0 ] || [ "$rt" != 0 ]; then hard "$label crash/ANR in $PKG"; fi
+          }
+
+          dumplog() {
+            adb logcat -b all -d -v threadtime > "$OUT/logcat-$1-full.txt" 2>&1 || true
+            local pid; pid="$(pidnow)"
+            awk -v p="${pid:-NONE}" '$3==p || /Capacitor|chromium|OxPulse/' "$OUT/logcat-$1-full.txt" > "$OUT/logcat-$1-filtered.txt"
+          }
+
+          # --- environment ---
+          adb shell getprop ro.build.version.sdk | tr -d '\r' | sed 's/^/sdk=/' | tee -a "$OUT/RESULT.txt"
+          adb shell dumpsys webviewupdate 2>/dev/null | grep -iE 'current|package|version' > "$OUT/webview-impl.txt" || true
+          for p in com.google.android.webview com.android.webview com.google.android.apps.chrome; do
+            adb shell dumpsys package "$p" 2>/dev/null | grep -m1 versionName | sed "s/^/$p /" >> "$OUT/webview-impl.txt" || true
+          done
+          note "webview: $(tr '\n' ';' < "$OUT/webview-impl.txt" | cut -c1-400)"
+          adb shell input keyevent 82; adb shell wm dismiss-keyguard 2>/dev/null || true
+          adb shell settings put system accelerometer_rotation 0
+          adb shell settings put system user_rotation 0
+
+          # --- 1. v0.1.2 ---
+          adb logcat -b all -c
+          adb install apks/v012.apk 2>&1 | tee "$OUT/install-v012.txt" | tail -2
+          grep -q Success "$OUT/install-v012.txt" || { hard "v0.1.2 install failed"; exit 1; }
+          adb shell am start -W -n "$PKG/.MainActivity" > "$OUT/am-start-v012.txt" 2>&1; cat "$OUT/am-start-v012.txt" | tr '\n' ' '; echo
+          sleep 45
+          shot "v012-api$API.png"
+          pkginfo v012
+          note "v0.1.2 pid=$(pidnow) rotation=$(rotation)"
+          dumplog v012
+          crashscan "$OUT/logcat-v012-full.txt" "v0.1.2"
+
+          # --- 2. data baseline ---
+          snapshot base
+          if [ ! -s "$OUT/webview-base.paths.txt" ]; then note "v0.1.2 wrote NOTHING under app_webview"; fi
+
+          # --- 3. install over ---
+          adb install -r apks/v013.apk 2>&1 | tee "$OUT/install-v013.txt" | tail -3
+          if ! grep -q Success "$OUT/install-v013.txt"; then
+            hard "install -r v0.1.3 failed: $(tr '\n' ' ' < "$OUT/install-v013.txt")"
+            exit 1
+          fi
+          note "install -r v0.1.3: Success without uninstall"
+          pkginfo v013
+          fi12="$(field v012 firstInstallTime)"; fi13="$(field v013 firstInstallTime)"
+          note "firstInstallTime before: $fi12 | after: $fi13"
+          [ -n "$fi12" ] && [ "$fi12" = "$fi13" ] || hard "firstInstallTime changed or missing"
+          note "lastUpdateTime before: $(field v012 lastUpdateTime) | after: $(field v013 lastUpdateTime)"
+          note "versionCode before: $(field v012 versionCode) | after: $(field v013 versionCode)"
+
+          # --- 4. data survival before launch ---
+          snapshot preupgrade
+          comm -23 "$OUT/webview-base.paths.txt" "$OUT/webview-preupgrade.paths.txt" > "$OUT/webview-missing-after-update.txt"
+          miss_all="$(wc -l < "$OUT/webview-missing-after-update.txt")"
+          miss_id="$(grep -ciE 'Local Storage|IndexedDB' "$OUT/webview-missing-after-update.txt")"
+          note "data survival (pre-launch): baseline=$(wc -l < "$OUT/webview-base.paths.txt") missing_total=$miss_all missing_localstorage_indexeddb=$miss_id"
+          [ "$miss_id" = 0 ] || hard "Local Storage/IndexedDB files missing after update-in-place"
+
+          # --- 5. launch v0.1.3 ---
+          adb logcat -b all -c
+          adb shell am start -W -n "$PKG/.MainActivity" > "$OUT/am-start-v013.txt" 2>&1; cat "$OUT/am-start-v013.txt" | tr '\n' ' '; echo
+          sleep 45
+          shot "v013-api$API.png"
+          sleep 15
+          PID1="$(pidnow)"
+          [ -n "$PID1" ] || hard "process not alive at 60s"
+          note "v0.1.3 pid at 60s: ${PID1:-none}"
+          EV1="$(evcount)"; CAP1="$(capcount)"
+          note "after launch: activity lifecycle events(MainActivity)=$EV1 capacitor_bridge_start_lines=$CAP1 capacitor_total_lines=$(adb logcat -d -s Capacitor:V | wc -l)"
+          [ "$EV1" -ge 1 ] || note "WARN: no activity lifecycle events seen in events buffer (signal unavailable)"
+          snapshot postlaunch
+          note "data after launch: $(wc -l < "$OUT/webview-postlaunch.paths.txt") files; changed hashes vs baseline: $(comm -12 <(sort "$OUT/webview-base.sha256") <(sort "$OUT/webview-postlaunch.sha256") | wc -l) identical of $(wc -l < "$OUT/webview-base.sha256")"
+
+          # --- 6. rotation ---
+          adb shell settings put system accelerometer_rotation 0
+          adb shell settings put system user_rotation 1
+          sleep 5
+          note "rotation after set: $(rotation)"
+          shot "v013-api$API-landscape.png"
+          adb shell settings put system user_rotation 0
+          sleep 5
+          note "rotation after restore: $(rotation)"
+          PID2="$(pidnow)"; EV2="$(evcount)"; CAP2="$(capcount)"
+          note "after rotation: pid=$PID2 events=$EV2 (was $EV1) bridge_start_lines=$CAP2 (was $CAP1)"
+          [ "$PID2" = "$PID1" ] || hard "process changed/died during rotation"
+          [ "$EV2" = "$EV1" ] || hard "activity lifecycle events increased on rotation ($EV1 -> $EV2): recreation"
+          [ "$CAP2" = "$CAP1" ] || hard "Capacitor bridge-start lines increased on rotation ($CAP1 -> $CAP2)"
+
+          # --- 7. background / foreground ---
+          adb shell input keyevent KEYCODE_HOME
+          sleep 10
+          PID3="$(pidnow)"
+          [ "$PID3" = "$PID1" ] || hard "process died/changed while backgrounded (pid '$PID3')"
+          adb shell am start -W -n "$PKG/.MainActivity" > "$OUT/am-start-resume.txt" 2>&1; tr '\n' ' ' < "$OUT/am-start-resume.txt"; echo
+          sleep 5
+          shot "v013-api$API-resumed.png"
+          PID4="$(pidnow)"; EV4="$(evcount)"; CAP4="$(capcount)"
+          note "after HOME+relaunch: pid=$PID4 events=$EV4 (was $EV2) bridge_start_lines=$CAP4 (was $CAP2)"
+          [ "$PID4" = "$PID1" ] || hard "process not alive/unchanged after relaunch"
+          [ "$CAP4" = "$CAP2" ] || hard "new Capacitor bridge start after HOME+relaunch"
+          [ "$EV4" = "$EV2" ] || note "NOTE: lifecycle events changed on HOME+relaunch ($EV2 -> $EV4); see events log (stop/restart is expected, create/destroy is not)"
+          adb logcat -b events -d | grep -E 'create_activity|destroy_activity|relaunch_activity' | grep MainActivity > "$OUT/events-lifecycle.txt" || true
+          grep -E 'destroy_activity|relaunch_activity' "$OUT/events-lifecycle.txt" > "$OUT/events-destroy-relaunch.txt" || true
+          [ ! -s "$OUT/events-destroy-relaunch.txt" ] || hard "MainActivity destroy/relaunch event(s) recorded: $(wc -l < "$OUT/events-destroy-relaunch.txt")"
+          adb shell input keyevent KEYCODE_BACK
+          sleep 3
+          shot "v013-api$API-after-back.png"
+          note "after BACK: pid='$(pidnow)' (process may legitimately remain or exit after the root activity finishes)"
+
+          # --- 8. UA ---
+          if adb logcat -b all -d | grep -q 'OxPulseShell'; then
+            adb logcat -b all -d | grep 'OxPulseShell' | head -5 | tee "$OUT/ua-evidence.txt"
+            note "UA observed in logcat"
+          else
+            note "UA not observable at runtime in a release build (no log line contains OxPulseShell); static evidence: packaged capacitor.config.json (see capacitor-config-v013.json) + assert-ble-token in release CI"
+          fi
+
+          # --- 9. logs & final scan ---
+          dumplog v013
+          crashscan "$OUT/logcat-v013-full.txt" "v0.1.3"
+          adb shell dumpsys activity activities 2>/dev/null | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp' | head -5 > "$OUT/dumpsys-activity-final.txt" || true
+          note "RESULT: $([ "$FAIL" = 0 ] && echo PASS || echo FAIL)"
+          exit "$FAIL"
+          SMOKE_EOF
+          chmod +x smoke.sh
+
+      - name: Emulator smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: ${{ matrix.arch }}
+          disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash smoke.sh ${{ matrix.api }}
+
+      - name: Summary
+        if: always()
+        run: |
+          { echo '```'; cat out/RESULT.txt 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-smoke-api${{ matrix.api }}
+          path: out/
+          if-no-files-found: warn
