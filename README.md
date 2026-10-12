@@ -77,13 +77,7 @@ Two things worth knowing before you file a build issue:
 
 Releases are cut by release-please: merging its release PR creates the tag and the GitHub Release, and the tag build attaches the signed APK, the AAB and `apk-sha256.txt`.
 
-**A release is first published as a prerelease.** `release-please-config.json` sets `"prerelease": true`, and the attach step reads that flag back from the release instead of restating it. GitHub's "latest" never points at a prerelease, so `/releases/latest/download/app-release.apk` keeps serving the previous release until someone promotes the new one. Install the prerelease APK from the release page to test it, then promote it without rebuilding:
-
-```sh
-gh release edit <tag> --prerelease=false --latest
-```
-
-Once promoted, set `"prerelease": false` (or remove it) in `release-please-config.json`. Leaving it on would hide every later `0.x` release from `/releases/latest`.
+Releases are published as normal (latest) releases, so `/releases/latest/download/app-release.apk` serves the newest one. The attach step reads the prerelease flag back from the release release-please created instead of restating it, so a release that is flagged as a prerelease by hand stays one.
 
 **`versionCode` only goes up.** Android refuses to install a lower `versionCode` over a higher one, and the only way back is to uninstall, which deletes the app's local data, including the device identity. So there is no downgrade: if a release is bad, publish a fixed one with a higher `versionCode`. A fix cut from an older line needs a larger offset than the one in `android/app/build.gradle` (`versionCodeOffset`), so that it installs over any build from the newer line.
 
