@@ -32,12 +32,21 @@ jobs:
           - api: 35
             arch: x86_64
             gpu: swiftshader_indirect
+            diag: bt
+            suffix: -btprobe
     steps:
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+
+      - name: Emulator flags (diagnostic)
+        continue-on-error: true
+        run: |
+          mkdir -p out
+          "$ANDROID_HOME/emulator/emulator" -version 2>&1 | head -3 | tee out/emulator-version.txt
+          "$ANDROID_HOME/emulator/emulator" -help-all 2>&1 | grep -iE "bluetooth|netsim|packet|uwb|-feature|no-.*(audio|boot|metrics)" | tee out/emulator-flags.txt
 
       - name: Download release APKs
         run: |
@@ -147,6 +156,11 @@ jobs:
           # --- screencap probe on the home screen (no app running) ---
           adb exec-out screencap -p > "$OUT/home-probe.png"; note "home screencap: $(stat -c %s "$OUT/home-probe.png") bytes, state=$(adb get-state 2>&1 | head -1)"
 
+          if [ "${DIAG:-}" = bt ]; then
+            adb shell svc bluetooth enable > "$OUT/bt-probe-start.txt" 2>&1
+            for i in $(seq 1 10); do echo "$(date +%T) state=$(adb get-state 2>&1 | head -1) qemu=$(pgrep -fc 'qemu-system|emulator64' || true)" >> "$OUT/bt-probe.txt"; sleep 3; done
+            note "bt probe: $(tail -1 "$OUT/bt-probe.txt")"
+          fi
           if [ "${DIAG:-}" = chrome ]; then
             adb shell am start -a android.intent.action.VIEW -d https://example.com > "$OUT/chrome-probe-start.txt" 2>&1
             for i in $(seq 1 10); do echo "$(date +%T) state=$(adb get-state 2>&1 | head -1) qemu=$(pgrep -fc 'qemu-system|emulator64' || true)" >> "$OUT/chrome-probe.txt"; sleep 3; done
