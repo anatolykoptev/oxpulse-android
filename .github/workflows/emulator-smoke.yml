@@ -70,13 +70,23 @@ jobs:
           FAIL=0
           mkdir -p "$OUT"
 
+          # Bound every adb call so a dead emulator fails the run instead of hanging it.
+          ADB="$(command -v adb)"
+          adb() { timeout 120 "$ADB" "$@"; }
+          devcheck() { local st; st="$(adb get-state 2>&1)"; note "device state ($1): $st"; adb devices -l >> "$OUT/adb-devices.txt" 2>&1; [ "$st" = device ] || { hard "emulator/adb lost at: $1"; exit 1; }; }
+
           note() { echo "[api$API] $*" | tee -a "$OUT/RESULT.txt"; }
           hard() { echo "[api$API] HARD FAIL: $*" | tee -a "$OUT/RESULT.txt"; FAIL=1; }
           shot() { adb exec-out screencap -p > "$OUT/$1"; note "screenshot $1 ($(stat -c %s "$OUT/$1") bytes)"; }
           pidnow() { adb shell pidof "$PKG" | tr -d '\r'; }
           # Activity lifecycle events for MainActivity (create/destroy/relaunch) from the events buffer.
-          evcount() { adb logcat -b events -d 2>/dev/null | grep -E 'create_activity|destroy_activity|relaunch_activity' | grep -c 'MainActivity'; }
-          capcount() { adb logcat -d -s Capacitor:V 2>/dev/null | grep -cE 'Loading app at|Starting BridgeActivity'; }
+          # Live logcat to a file (the device ring buffer evicts old lines under chromium spam).
+          LIVE="$OUT/logcat-live.txt"
+          livestart() { livestop; adb logcat -b all -c; : > "$LIVE"; "$ADB" logcat -b all -v threadtime >> "$LIVE" 2>&1 & LIVEPID=$!; sleep 1; }
+          livestop() { [ -n "${LIVEPID:-}" ] && kill "$LIVEPID" 2>/dev/null; LIVEPID=""; }
+          evcount() { grep -E 'create_activity|destroy_activity|relaunch_activity' "$LIVE" | grep -c 'MainActivity'; }
+          capcount() { grep -E ' Capacitor *: ' "$LIVE" | grep -cE 'Loading app at|Starting BridgeActivity'; }
+          captotal() { grep -cE ' Capacitor *: ' "$LIVE"; }
           rotation() { adb shell dumpsys window 2>/dev/null | grep -m1 -oE 'mCurrentRotation=[A-Za-z0-9_]+' ; }
 
           pkginfo() {
@@ -107,7 +117,7 @@ jobs:
           }
 
           dumplog() {
-            adb logcat -b all -d -v threadtime > "$OUT/logcat-$1-full.txt" 2>&1 || true
+            sleep 2; cp "$LIVE" "$OUT/logcat-$1-full.txt"
             local pid; pid="$(pidnow)"
             awk -v p="${pid:-NONE}" '$3==p || /Capacitor|chromium|OxPulse/' "$OUT/logcat-$1-full.txt" > "$OUT/logcat-$1-filtered.txt"
           }
@@ -120,15 +130,21 @@ jobs:
           done
           note "webview: $(tr '\n' ';' < "$OUT/webview-impl.txt" | cut -c1-400)"
           adb shell input keyevent 82; adb shell wm dismiss-keyguard 2>/dev/null || true
+          # Keep unrelated system-image app crash dialogs (e.g. Messenger) from covering the app under test.
+          adb shell settings put global hide_error_dialogs 1
+          adb root >/dev/null 2>&1; adb wait-for-device
+          adb shell pm disable-user --user 0 com.google.android.apps.messaging 2>&1 | sed 's/^/messaging: /'
+          adb logcat -G 16M 2>&1 | head -1
           adb shell settings put system accelerometer_rotation 0
           adb shell settings put system user_rotation 0
 
           # --- 1. v0.1.2 ---
-          adb logcat -b all -c
+          livestart
           adb install apks/v012.apk 2>&1 | tee "$OUT/install-v012.txt" | tail -2
           grep -q Success "$OUT/install-v012.txt" || { hard "v0.1.2 install failed"; exit 1; }
           adb shell am start -W -n "$PKG/.MainActivity" > "$OUT/am-start-v012.txt" 2>&1; cat "$OUT/am-start-v012.txt" | tr '\n' ' '; echo
           sleep 45
+          devcheck "v0.1.2 after 45s"
           shot "v012-api$API.png"
           pkginfo v012
           note "v0.1.2 pid=$(pidnow) rotation=$(rotation)"
@@ -162,16 +178,17 @@ jobs:
           [ "$miss_id" = 0 ] || hard "Local Storage/IndexedDB files missing after update-in-place"
 
           # --- 5. launch v0.1.3 ---
-          adb logcat -b all -c
+          livestart
           adb shell am start -W -n "$PKG/.MainActivity" > "$OUT/am-start-v013.txt" 2>&1; cat "$OUT/am-start-v013.txt" | tr '\n' ' '; echo
           sleep 45
+          devcheck "v0.1.3 after 45s"
           shot "v013-api$API.png"
           sleep 15
           PID1="$(pidnow)"
           [ -n "$PID1" ] || hard "process not alive at 60s"
           note "v0.1.3 pid at 60s: ${PID1:-none}"
           EV1="$(evcount)"; CAP1="$(capcount)"
-          note "after launch: activity lifecycle events(MainActivity)=$EV1 capacitor_bridge_start_lines=$CAP1 capacitor_total_lines=$(adb logcat -d -s Capacitor:V | wc -l)"
+          note "after launch: activity lifecycle events(MainActivity)=$EV1 capacitor_bridge_start_lines=$CAP1 capacitor_total_lines=$(captotal)"
           [ "$EV1" -ge 1 ] || note "WARN: no activity lifecycle events seen in events buffer (signal unavailable)"
           snapshot postlaunch
           note "data after launch: $(wc -l < "$OUT/webview-postlaunch.paths.txt") files; changed hashes vs baseline: $(comm -12 <(sort "$OUT/webview-base.sha256") <(sort "$OUT/webview-postlaunch.sha256") | wc -l) identical of $(wc -l < "$OUT/webview-base.sha256")"
@@ -189,7 +206,7 @@ jobs:
           note "after rotation: pid=$PID2 events=$EV2 (was $EV1) bridge_start_lines=$CAP2 (was $CAP1)"
           [ "$PID2" = "$PID1" ] || hard "process changed/died during rotation"
           [ "$EV2" = "$EV1" ] || hard "activity lifecycle events increased on rotation ($EV1 -> $EV2): recreation"
-          [ "$CAP2" = "$CAP1" ] || hard "Capacitor bridge-start lines increased on rotation ($CAP1 -> $CAP2)"
+          [ "$CAP2" -le "$CAP1" ] || hard "Capacitor bridge-start lines increased on rotation ($CAP1 -> $CAP2)"
 
           # --- 7. background / foreground ---
           adb shell input keyevent KEYCODE_HOME
@@ -202,9 +219,9 @@ jobs:
           PID4="$(pidnow)"; EV4="$(evcount)"; CAP4="$(capcount)"
           note "after HOME+relaunch: pid=$PID4 events=$EV4 (was $EV2) bridge_start_lines=$CAP4 (was $CAP2)"
           [ "$PID4" = "$PID1" ] || hard "process not alive/unchanged after relaunch"
-          [ "$CAP4" = "$CAP2" ] || hard "new Capacitor bridge start after HOME+relaunch"
+          [ "$CAP4" -le "$CAP2" ] || hard "new Capacitor bridge start after HOME+relaunch"
           [ "$EV4" = "$EV2" ] || note "NOTE: lifecycle events changed on HOME+relaunch ($EV2 -> $EV4); see events log (stop/restart is expected, create/destroy is not)"
-          adb logcat -b events -d | grep -E 'create_activity|destroy_activity|relaunch_activity' | grep MainActivity > "$OUT/events-lifecycle.txt" || true
+          grep -E 'create_activity|destroy_activity|relaunch_activity' "$LIVE" | grep MainActivity > "$OUT/events-lifecycle.txt" || true
           grep -E 'destroy_activity|relaunch_activity' "$OUT/events-lifecycle.txt" > "$OUT/events-destroy-relaunch.txt" || true
           [ ! -s "$OUT/events-destroy-relaunch.txt" ] || hard "MainActivity destroy/relaunch event(s) recorded: $(wc -l < "$OUT/events-destroy-relaunch.txt")"
           adb shell input keyevent KEYCODE_BACK
@@ -213,8 +230,8 @@ jobs:
           note "after BACK: pid='$(pidnow)' (process may legitimately remain or exit after the root activity finishes)"
 
           # --- 8. UA ---
-          if adb logcat -b all -d | grep -q 'OxPulseShell'; then
-            adb logcat -b all -d | grep 'OxPulseShell' | head -5 | tee "$OUT/ua-evidence.txt"
+          if grep -q 'OxPulseShell' "$LIVE"; then
+            grep 'OxPulseShell' "$LIVE" | head -5 | tee "$OUT/ua-evidence.txt"
             note "UA observed in logcat"
           else
             note "UA not observable at runtime in a release build (no log line contains OxPulseShell); static evidence: packaged capacitor.config.json (see capacitor-config-v013.json) + assert-ble-token in release CI"
@@ -222,6 +239,8 @@ jobs:
 
           # --- 9. logs & final scan ---
           dumplog v013
+          livestop
+          rm -f "$LIVE"
           crashscan "$OUT/logcat-v013-full.txt" "v0.1.3"
           adb shell dumpsys activity activities 2>/dev/null | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp' | head -5 > "$OUT/dumpsys-activity-final.txt" || true
           note "RESULT: $([ "$FAIL" = 0 ] && echo PASS || echo FAIL)"
@@ -230,12 +249,15 @@ jobs:
           chmod +x smoke.sh
 
       - name: Emulator smoke
+        timeout-minutes: 25
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
           target: google_apis
           arch: ${{ matrix.arch }}
           disable-animations: true
+          ram-size: 4096M
+          heap-size: 512M
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash smoke.sh ${{ matrix.api }}
