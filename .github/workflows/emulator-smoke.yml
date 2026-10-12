@@ -136,6 +136,9 @@ jobs:
           done
           note "idle probe: $(tail -1 "$OUT/idle-probe.txt")"
 
+          # --- screencap probe on the home screen (no app running) ---
+          adb exec-out screencap -p > "$OUT/home-probe.png"; note "home screencap: $(stat -c %s "$OUT/home-probe.png") bytes, state=$(adb get-state 2>&1 | head -1)"
+
           # --- environment ---
           adb shell getprop ro.build.version.sdk | tr -d '\r' | sed 's/^/sdk=/' | tee -a "$OUT/RESULT.txt"
           adb shell dumpsys webviewupdate 2>/dev/null | grep -iE 'current|package|version' > "$OUT/webview-impl.txt" || true
@@ -157,7 +160,10 @@ jobs:
           adb install apks/v012.apk 2>&1 | tee "$OUT/install-v012.txt" | tail -2
           grep -q Success "$OUT/install-v012.txt" || { hard "v0.1.2 install failed"; exit 1; }
           adb shell am start -W -n "$PKG/.MainActivity" > "$OUT/am-start-v012.txt" 2>&1; cat "$OUT/am-start-v012.txt" | tr '\n' ' '; echo
-          sleep 45
+          for i in $(seq 1 15); do
+            echo "$(date +%T) state=$(adb get-state 2>&1 | head -1) qemu=$(pgrep -fc 'qemu-system|emulator64' || true) boot=$(adb shell getprop sys.boot_completed 2>&1 | head -1) pid=$(pidnow)" >> "$OUT/launch-heartbeat.txt"
+            sleep 3
+          done
           devcheck "v0.1.2 after 45s"
           shot "v012-api$API.png"
           pkginfo v012
