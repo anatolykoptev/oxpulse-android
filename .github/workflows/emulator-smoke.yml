@@ -24,6 +24,14 @@ jobs:
           - api: 36
             arch: x86_64
             gpu: guest
+          - api: 36
+            arch: x86_64
+            gpu: swiftshader_indirect
+            diag: chrome
+            suffix: -chromeprobe
+          - api: 35
+            arch: x86_64
+            gpu: swiftshader_indirect
     steps:
       - name: Enable KVM
         run: |
@@ -138,6 +146,13 @@ jobs:
 
           # --- screencap probe on the home screen (no app running) ---
           adb exec-out screencap -p > "$OUT/home-probe.png"; note "home screencap: $(stat -c %s "$OUT/home-probe.png") bytes, state=$(adb get-state 2>&1 | head -1)"
+
+          if [ "${DIAG:-}" = chrome ]; then
+            adb shell am start -a android.intent.action.VIEW -d https://example.com > "$OUT/chrome-probe-start.txt" 2>&1
+            for i in $(seq 1 10); do echo "$(date +%T) state=$(adb get-state 2>&1 | head -1) qemu=$(pgrep -fc 'qemu-system|emulator64' || true)" >> "$OUT/chrome-probe.txt"; sleep 3; done
+            note "chrome probe: $(tail -1 "$OUT/chrome-probe.txt")"
+            adb shell input keyevent KEYCODE_HOME
+          fi
 
           # --- environment ---
           adb shell getprop ro.build.version.sdk | tr -d '\r' | sed 's/^/sdk=/' | tee -a "$OUT/RESULT.txt"
@@ -280,7 +295,7 @@ jobs:
           heap-size: 512M
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash smoke.sh ${{ matrix.api }}
+          script: env DIAG=${{ matrix.diag }} bash smoke.sh ${{ matrix.api }}
 
       - name: Host diagnostics
         if: always()
@@ -300,6 +315,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: emulator-smoke-api${{ matrix.api }}
+          name: emulator-smoke-api${{ matrix.api }}${{ matrix.suffix }}
           path: out/
           if-no-files-found: warn
