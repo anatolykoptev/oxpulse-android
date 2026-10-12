@@ -21,13 +21,28 @@ jobs:
           - api: 24
             arch: x86
             gpu: swiftshader_indirect
+          # API 36 emulator can exit on its own a few seconds after the WebView starts using
+          # the network (host-side emulator crash, no app error). Several attempts expose the rate.
           - api: 36
             arch: x86_64
             gpu: swiftshader_indirect
-            # Without this the API 36 emulator process exits a few seconds after the
-            # WebView starts talking to the network (host-side crash in the emulator
-            # networking, unrelated to the app); QUIC off avoids it.
             wvflags: '_ --disable-quic'
+            suffix: -trya
+          - api: 36
+            arch: x86_64
+            gpu: swiftshader_indirect
+            wvflags: '_ --disable-quic'
+            suffix: -tryb
+          - api: 36
+            arch: x86_64
+            gpu: swiftshader_indirect
+            wvflags: '_ --disable-quic'
+            suffix: -tryc
+          - api: 36
+            arch: x86_64
+            gpu: swiftshader_indirect
+            wvflags: '_ --disable-quic'
+            suffix: -tryd
     steps:
       - name: Enable KVM
         run: |
