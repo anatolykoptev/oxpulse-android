@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/anatolykoptev/oxpulse-android/compare/v0.1.2...v0.1.3) (2026-10-12)
+
+
+### Added
+
+* **android:** Capacitor 8 and bluetooth-le 8.3; SDK 36, minSdk 24 ([#49](https://github.com/anatolykoptev/oxpulse-android/issues/49)) ([536222b](https://github.com/anatolykoptev/oxpulse-android/commit/536222b9a50a623cafa8fa4903101ae55b3841d5))
+* **android:** ship the BluetoothLe and Network Capacitor plugins the web app calls ([#45](https://github.com/anatolykoptev/oxpulse-android/issues/45)) ([9dd9a44](https://github.com/anatolykoptev/oxpulse-android/commit/9dd9a44d6106e4240ef18f00e8f1e0a15359e8d0))
+
 ## [0.1.2](https://github.com/anatolykoptev/oxpulse-android/compare/v0.1.1...v0.1.2) (2026-08-10)
 
 
