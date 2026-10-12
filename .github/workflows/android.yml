@@ -83,6 +83,37 @@ jobs:
         working-directory: android
         run: ./gradlew test --no-daemon --console=plain
 
+      # ── Which AGP / R8 each project really resolves ──────────────────────────
+      # Capacitor and some plugins declare their own buildscript classpath, so
+      # the root AGP version is not proof of what a library module builds with.
+      # Print the resolved build-plugin versions for the root and every
+      # subproject instead of assuming.
+      - name: Resolved AGP / R8 / KGP per project
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: android
+        shell: bash
+        run: |
+          set -uo pipefail
+          for p in "" :app :capacitor-android :capacitor-community-bluetooth-le \
+                   :capacitor-network :call-reliability-lib :mesh-core-lib; do
+            echo "=== ${p:-<root>} buildEnvironment"
+            ./gradlew -q --no-daemon --console=plain "${p}:buildEnvironment" > /tmp/be.txt \
+              || { echo "::error::${p:-root}:buildEnvironment failed"; cat /tmp/be.txt; exit 1; }
+            grep -E 'com\.android\.tools\.build:gradle|com\.android\.tools:r8|kotlin-gradle-plugin' /tmp/be.txt \
+              | sed -E 's/^[ |+\\-]+//' | sort | uniq -c || true
+          done
+
+          # buildEnvironment shows what each buildscript DECLARES. The block below
+          # shows which AGP actually ran for each project, and fails on any other
+          # than the root's.
+          echo "=== AGP actually applied per project"
+          ./gradlew -q --no-daemon --console=plain -I "$GITHUB_WORKSPACE/.github/scripts/agp-runtime.init.gradle" help \
+            | tee /tmp/agp-runtime.txt
+          grep -q '^AGP-RUNTIME ' /tmp/agp-runtime.txt || { echo "::error::no AGP-RUNTIME lines printed"; exit 1; }
+          if grep '^AGP-RUNTIME ' /tmp/agp-runtime.txt | grep -qv 'agp=8\.13\.2 '; then
+            echo "::error::a project runs an AGP other than 8.13.2"; exit 1
+          fi
+
       # ── The gate that v0.1.0 needed and did not have ────────────────────────
       # A green Gradle build does NOT mean the app can start. :app had no
       # kotlin-android plugin, so its .kt sources were silently skipped and the
@@ -191,6 +222,10 @@ jobs:
           done
           exit $fail
 
+      - name: assert-r8-version (release)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: bash .github/scripts/assert-r8-version.sh "$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)"
+
       - name: Verify the APK is actually signed
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -216,3 +251,97 @@ jobs:
             apk-sha256.txt
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+  # ── Minified release on every PR ─────────────────────────────────────────────
+  # Debug builds are not minified, so R8 only ever runs on a tag. This job builds
+  # the real release variant with a throwaway keystore generated here (no repo
+  # secrets) and asserts the same things the tag job asserts. The APK is signed
+  # with a key that is discarded with the runner: never publish it.
+  release-probe:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # versionCode comes from `git rev-list --count HEAD`
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: npm ci
+
+      - name: Capacitor sync
+        env:
+          CAP_SERVER_URL: ${{ vars.CAP_SERVER_URL || 'https://oxpulse.chat' }}
+        run: npx cap sync android
+
+      - name: Generate throwaway signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          STORE_PASSWORD=$(openssl rand -hex 16)
+          echo "::add-mask::$STORE_PASSWORD"
+          keytool -genkeypair -keystore android/probe.jks -storetype PKCS12 \
+            -alias probe -keyalg RSA -keysize 2048 -validity 2 \
+            -dname "CN=throwaway probe" \
+            -storepass "$STORE_PASSWORD" -keypass "$STORE_PASSWORD"
+          {
+            echo "storeFile=$PWD/android/probe.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=probe"
+            echo "keyPassword=$STORE_PASSWORD"
+          } > android/keystore.properties
+
+      - name: Build minified release APK
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --no-daemon --console=plain
+
+      - name: assert-dex-classes (release probe)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          [ -n "$APK" ] || { echo "::error::no release APK to check"; exit 1; }
+          ls -l "$APK"
+          unzip -o -q -p "$APK" 'classes*.dex' > /tmp/rel.dex
+          fail=0
+          for c in MainActivity SharePackagePlugin \
+                   callreliability/VoiceCallForegroundService \
+                   callreliability/CallReliabilityPlugin \
+                   mesh/MeshGattServerPlugin \
+                   com/capacitorjs/community/plugins/bluetoothle/BluetoothLe \
+                   com/capacitorjs/plugins/network/NetworkPlugin; do
+            case "$c" in com/*) fq="$c" ;; *) fq="run/krolik/oxpulse/$c" ;; esac
+            if grep -aq "L$fq;" /tmp/rel.dex; then
+              echo "  ok      ${fq//\//.}"
+            else
+              echo "::error::${fq//\//.} is ABSENT from the release dex"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: assert-r8-version (release probe)
+        run: bash .github/scripts/assert-r8-version.sh "$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)"
+
+      - name: Shred throwaway signing material
+        if: always()
+        run: rm -f android/probe.jks android/keystore.properties
+
+      - name: Upload throwaway release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxpulse-throwaway-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 3
