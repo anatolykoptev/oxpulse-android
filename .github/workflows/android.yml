@@ -228,7 +228,7 @@ jobs:
 
       # softprops/action-gh-release v2.6.2 (src/github.ts): on an existing release
       # an unset `prerelease` input keeps the release's own flag, and `make_latest`
-      # is passed through to the update call, where GitHub's default is `legacy`.
+      # is passed through to GitHub, whose documented default is `true`.
       # Both are set explicitly so the outcome does not depend on those defaults.
       # A prerelease can never be "latest", so make_latest is false for one.
       - name: Attach artefacts to the release
