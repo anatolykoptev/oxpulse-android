@@ -24,13 +24,10 @@ jobs:
           - api: 36
             arch: x86_64
             gpu: swiftshader_indirect
-            wvflags: '_ --disable-gpu --disable-gpu-compositing'
-            suffix: -wvgpu
-          - api: 36
-            arch: x86_64
-            gpu: swiftshader_indirect
+            # Without this the API 36 emulator process exits a few seconds after the
+            # WebView starts talking to the network (host-side crash in the emulator
+            # networking, unrelated to the app); QUIC off avoids it.
             wvflags: '_ --disable-quic'
-            suffix: -wvquic
     steps:
       - name: Enable KVM
         run: |
