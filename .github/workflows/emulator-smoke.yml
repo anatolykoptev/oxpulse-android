@@ -24,8 +24,17 @@ jobs:
           - api: 36
             arch: x86_64
             gpu: swiftshader_indirect
-            netoff: '1'
-            suffix: -netoff
+            wvflags: '1'
+            suffix: -wvflags
+          - api: 36
+            arch: x86_64
+            gpu: swiftshader_indirect
+            extra: -cores 4
+            suffix: -cores4
+          - api: 36
+            arch: x86_64
+            gpu: 'off'
+            suffix: -gpuoff
     steps:
       - name: Enable KVM
         run: |
@@ -152,6 +161,11 @@ jobs:
             adb shell svc bluetooth disable 2>&1 | sed 's/^/btoff: /'
             sleep 5
             note "bluetooth disabled for the run: bluetooth_on=$(adb shell settings get global bluetooth_on | tr -d '\r')"
+          fi
+          if [ "${WVFLAGS:-}" = 1 ]; then
+            adb root >/dev/null 2>&1; adb wait-for-device
+            adb shell 'echo "_ --disable-gpu --disable-gpu-compositing" > /data/local/tmp/webview-command-line; chmod 644 /data/local/tmp/webview-command-line'
+            note "webview-command-line: $(adb shell cat /data/local/tmp/webview-command-line)"
           fi
           if [ "${NETOFF:-}" = 1 ]; then
             adb shell cmd connectivity airplane-mode enable 2>&1 | sed 's/^/netoff: /'
@@ -312,7 +326,7 @@ jobs:
           heap-size: 512M
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim ${{ matrix.extra }} -camera-back none -camera-front none
-          script: env NETOFF=${{ matrix.netoff }} bash smoke.sh ${{ matrix.api }}
+          script: env WVFLAGS=${{ matrix.wvflags }} bash smoke.sh ${{ matrix.api }}
 
       - name: Host diagnostics
         if: always()
