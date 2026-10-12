@@ -128,7 +128,7 @@ class VoiceCallForegroundService : Service() {
     // phoneCall type (no 6h limit), but defensive: tear down cleanly + emit
     // telemetry so we catch the contract violation if Android docs change.
     @Suppress("UNUSED_PARAMETER")
-    fun onTimeout(startId: Int, fgsType: Int) {
+    override fun onTimeout(startId: Int, fgsType: Int) {
         Log.w(TAG, "FGS onTimeout fired — fgsType=$fgsType")
         VoiceCallForegroundServiceCallbacks.onTimeoutFired(fgsType)
         stopSelf()

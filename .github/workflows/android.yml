@@ -47,7 +47,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -66,6 +66,14 @@ jobs:
           CAP_SERVER_URL: ${{ vars.CAP_SERVER_URL || 'https://oxpulse.chat' }}
         run: npx cap sync android
 
+      # The web app switches BLE mesh on only when the shell's bluetooth-le major
+      # equals the major bundled in its JS, and reads that major from the user
+      # agent token written here. A mismatch is silent in production: bluetooth-le
+      # 7.0 changed the hex wire format, so mismatched halves corrupt or reject
+      # every BLE write without any error surfacing. Fail the build instead.
+      - name: assert-ble-token (generated config)
+        run: bash .github/scripts/assert-cap-token.sh
+
       # ── PR / branch: unsigned debug build, the compile gate ─────────────────
       - name: Build debug APK
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -83,36 +91,39 @@ jobs:
         working-directory: android
         run: ./gradlew test --no-daemon --console=plain
 
-      # ── Which AGP / R8 each project really resolves ──────────────────────────
+      # ── Which AGP each project really runs ──────────────────────────────────
       # Capacitor and some plugins declare their own buildscript classpath, so
       # the root AGP version is not proof of what a library module builds with.
-      # Print the resolved build-plugin versions for the root and every
-      # subproject instead of assuming.
-      - name: Resolved AGP / R8 / KGP per project
+      # The init script prints the AGP each Android project actually loaded. The
+      # project list is asserted exactly: "at least one line" would pass with
+      # five of six modules silently missing.
+      - name: assert-agp-runtime
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         working-directory: android
         shell: bash
         run: |
-          set -uo pipefail
-          for p in "" :app :capacitor-android :capacitor-community-bluetooth-le \
-                   :capacitor-network :call-reliability-lib :mesh-core-lib; do
-            echo "=== ${p:-<root>} buildEnvironment"
-            ./gradlew -q --no-daemon --console=plain "${p}:buildEnvironment" > /tmp/be.txt \
-              || { echo "::error::${p:-root}:buildEnvironment failed"; cat /tmp/be.txt; exit 1; }
-            grep -E 'com\.android\.tools\.build:gradle|com\.android\.tools:r8|kotlin-gradle-plugin' /tmp/be.txt \
-              | sed -E 's/^[ |+\\-]+//' | sort | uniq -c || true
-          done
-
-          # buildEnvironment shows what each buildscript DECLARES. The block below
-          # shows which AGP actually ran for each project, and fails on any other
-          # than the root's.
-          echo "=== AGP actually applied per project"
+          set -euo pipefail
+          # Single source of truth: the root classpath declaration.
+          AGP=$(sed -nE "s/.*com\.android\.tools\.build:gradle:([0-9]+(\.[0-9]+){2}).*/\1/p" build.gradle | head -1)
+          [ -n "$AGP" ] || { echo "::error::cannot read the AGP version from android/build.gradle"; exit 1; }
           ./gradlew -q --no-daemon --console=plain -I "$GITHUB_WORKSPACE/.github/scripts/agp-runtime.init.gradle" help \
             | tee /tmp/agp-runtime.txt
-          grep -q '^AGP-RUNTIME ' /tmp/agp-runtime.txt || { echo "::error::no AGP-RUNTIME lines printed"; exit 1; }
-          if grep '^AGP-RUNTIME ' /tmp/agp-runtime.txt | grep -qv 'agp=8\.13\.2 '; then
-            echo "::error::a project runs an AGP other than 8.13.2"; exit 1
+          grep '^AGP-RUNTIME ' /tmp/agp-runtime.txt \
+            | awk '{ split($4, v, "="); print $2, $3, v[2] }' | sort > /tmp/agp-actual.txt
+          # Every Android module the build includes. A new or removed module
+          # fails here on purpose: update the list together with the module.
+          {
+            echo ":app com.android.application $AGP"
+            for m in :call-reliability-lib :capacitor-android :capacitor-community-bluetooth-le \
+                     :capacitor-cordova-android-plugins :mesh-core-lib; do
+              echo "$m com.android.library $AGP"
+            done
+          } | sort > /tmp/agp-expected.txt
+          if ! diff -u /tmp/agp-expected.txt /tmp/agp-actual.txt; then
+            echo "::error::Android projects or their AGP differ from the expected set (- expected, + actual)"
+            exit 1
           fi
+          echo "  ok      $(wc -l < /tmp/agp-actual.txt) projects on AGP $AGP"
 
       # ── The gate that v0.1.0 needed and did not have ────────────────────────
       # A green Gradle build does NOT mean the app can start. :app had no
@@ -128,29 +139,7 @@ jobs:
         # below would either come up empty or pick up the release APK before it
         # has been built.
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
-          [ -n "$APK" ] || { echo "::error::no APK to check"; exit 1; }
-          unzip -o -q -p "$APK" 'classes*.dex' > /tmp/all.dex
-          fail=0
-          for c in MainActivity SharePackagePlugin \
-                   callreliability/VoiceCallForegroundService \
-                   callreliability/CallReliabilityPlugin \
-                   mesh/MeshGattServerPlugin \
-                   com/capacitorjs/community/plugins/bluetoothle/BluetoothLe \
-                   com/capacitorjs/plugins/network/NetworkPlugin; do
-            # Third-party plugins live outside run/krolik/oxpulse.
-            case "$c" in com/*) fq="$c" ;; *) fq="run/krolik/oxpulse/$c" ;; esac
-            if grep -aq "L$fq;" /tmp/all.dex; then
-              echo "  ok      ${fq//\//.}"
-            else
-              echo "::error::${fq//\//.} is ABSENT from the dex — the APK cannot work"
-              fail=1
-            fi
-          done
-          exit $fail
+        run: bash .github/scripts/assert-dex-classes.sh "$(find android/app/build/outputs/apk -name '*.apk' | head -1)"
 
       - name: Upload debug APK
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -198,29 +187,7 @@ jobs:
 
       - name: assert-dex-classes (release)
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
-          [ -n "$APK" ] || { echo "::error::no release APK to check"; exit 1; }
-          unzip -o -q -p "$APK" 'classes*.dex' > /tmp/rel.dex
-          fail=0
-          for c in MainActivity SharePackagePlugin \
-                   callreliability/VoiceCallForegroundService \
-                   callreliability/CallReliabilityPlugin \
-                   mesh/MeshGattServerPlugin \
-                   com/capacitorjs/community/plugins/bluetoothle/BluetoothLe \
-                   com/capacitorjs/plugins/network/NetworkPlugin; do
-            # Third-party plugins live outside run/krolik/oxpulse.
-            case "$c" in com/*) fq="$c" ;; *) fq="run/krolik/oxpulse/$c" ;; esac
-            if grep -aq "L$fq;" /tmp/rel.dex; then
-              echo "  ok      ${fq//\//.}"
-            else
-              echo "::error::${fq//\//.} is ABSENT from the release dex"
-              fail=1
-            fi
-          done
-          exit $fail
+        run: bash .github/scripts/assert-dex-classes.sh "$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)"
 
       - name: assert-r8-version (release)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -231,20 +198,45 @@ jobs:
         run: |
           set -euo pipefail
           APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
-          [ -n "$APK" ] || { echo "::error::no release APK produced"; exit 1; }
-          # An unsigned APK is a plausible-looking build artefact. Assert the
-          # signature exists rather than trusting the exit code above.
-          "$ANDROID_HOME"/build-tools/34.0.0/apksigner verify --print-certs "$APK"
+          bash .github/scripts/verify-apk-signed.sh "$APK"
           sha256sum "$APK" | tee apk-sha256.txt
 
       - name: Shred signing material
         if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
         run: rm -f android/release.jks android/keystore.properties
 
+      # Whether this cut is a prerelease is decided once, by release-please
+      # (release-please-config.json), which creates the GitHub Release before this
+      # job runs. Read it back instead of restating it here, so promoting the
+      # release with `gh release edit --prerelease=false --latest` is not undone
+      # by a re-run of this job. An absent release is treated as a prerelease:
+      # that hides the APK from /releases/latest until someone promotes it.
+      - name: Read the release's prerelease flag
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: relflags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if pre=$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq .isPrerelease); then
+            :
+          else
+            echo "::notice::no release exists for $GITHUB_REF_NAME yet; creating it as a prerelease"
+            pre=true
+          fi
+          echo "prerelease=$pre" | tee -a "$GITHUB_OUTPUT"
+
+      # softprops/action-gh-release v2.6.2 (src/github.ts): on an existing release
+      # an unset `prerelease` input keeps the release's own flag, and `make_latest`
+      # is passed through to GitHub, whose documented default is `true`.
+      # Both are set explicitly so the outcome does not depend on those defaults.
+      # A prerelease can never be "latest", so make_latest is false for one.
       - name: Attach artefacts to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ steps.relflags.outputs.prerelease }}
+          make_latest: ${{ steps.relflags.outputs.prerelease == 'true' && 'false' || 'legacy' }}
           files: |
             android/app/build/outputs/apk/release/*.apk
             android/app/build/outputs/bundle/release/*.aab
@@ -274,7 +266,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -284,6 +276,14 @@ jobs:
         env:
           CAP_SERVER_URL: ${{ vars.CAP_SERVER_URL || 'https://oxpulse.chat' }}
         run: npx cap sync android
+
+      # The web app switches BLE mesh on only when the shell's bluetooth-le major
+      # equals the major bundled in its JS, and reads that major from the user
+      # agent token written here. A mismatch is silent in production: bluetooth-le
+      # 7.0 changed the hex wire format, so mismatched halves corrupt or reject
+      # every BLE write without any error surfacing. Fail the build instead.
+      - name: assert-ble-token (generated config)
+        run: bash .github/scripts/assert-cap-token.sh
 
       - name: Generate throwaway signing key
         shell: bash
@@ -307,32 +307,15 @@ jobs:
         run: ./gradlew :app:assembleRelease --no-daemon --console=plain
 
       - name: assert-dex-classes (release probe)
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
-          [ -n "$APK" ] || { echo "::error::no release APK to check"; exit 1; }
-          ls -l "$APK"
-          unzip -o -q -p "$APK" 'classes*.dex' > /tmp/rel.dex
-          fail=0
-          for c in MainActivity SharePackagePlugin \
-                   callreliability/VoiceCallForegroundService \
-                   callreliability/CallReliabilityPlugin \
-                   mesh/MeshGattServerPlugin \
-                   com/capacitorjs/community/plugins/bluetoothle/BluetoothLe \
-                   com/capacitorjs/plugins/network/NetworkPlugin; do
-            case "$c" in com/*) fq="$c" ;; *) fq="run/krolik/oxpulse/$c" ;; esac
-            if grep -aq "L$fq;" /tmp/rel.dex; then
-              echo "  ok      ${fq//\//.}"
-            else
-              echo "::error::${fq//\//.} is ABSENT from the release dex"
-              fail=1
-            fi
-          done
-          exit $fail
+        run: bash .github/scripts/assert-dex-classes.sh "$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)"
 
       - name: assert-r8-version (release probe)
         run: bash .github/scripts/assert-r8-version.sh "$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)"
+
+      # Same check the tag job runs, here against the throwaway key, so a broken
+      # apksigner lookup shows up on a PR instead of on a release tag.
+      - name: Verify the APK is signed (release probe)
+        run: bash .github/scripts/verify-apk-signed.sh "$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)"
 
       - name: Shred throwaway signing material
         if: always()

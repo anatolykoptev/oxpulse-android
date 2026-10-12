@@ -11,7 +11,5 @@ class MainActivity : BridgeActivity() {
         registerPlugin(SharePackagePlugin::class.java)
         registerPlugin(CallReliabilityPlugin::class.java)
         super.onCreate(savedInstanceState)
-        bridge.webView.settings.userAgentString =
-            bridge.webView.settings.userAgentString + " OxPulseShell/1"
     }
 }

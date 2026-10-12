@@ -56,7 +56,7 @@ should read it — it is the same warning you would get for anything not from a 
 
 ## Build it yourself
 
-Requires JDK 17, Node 22, and the Android SDK.
+Requires JDK 21, Node 22, and the Android SDK.
 
 ```sh
 npm ci
@@ -71,7 +71,21 @@ To point the app at a different backend, set `CAP_SERVER_URL` before `cap sync`.
 Two things worth knowing before you file a build issue:
 
 - **`aapt2` in the Android SDK is x86-64 only.** On an aarch64 Linux host the build fails with `AAPT2 Daemon startup failed`. This is why CI runs on `ubuntu-24.04` rather than an arm64 runner.
-- **`versionCode` comes from `git rev-list --count HEAD`.** A shallow clone makes it 1, which produces an APK that will not upgrade an existing install. CI checks out with `fetch-depth: 0` for this reason.
+- **`versionCode` is `git rev-list --count HEAD` plus 1000.** A shallow clone makes the count 1, which produces an APK that will not upgrade an existing install. CI checks out with `fetch-depth: 0` for this reason. The offset keeps this line above the codes of earlier releases, which were all below 1000; see [Releasing](#releasing).
+
+## Releasing
+
+Releases are cut by release-please: merging its release PR creates the tag and the GitHub Release, and the tag build attaches the signed APK, the AAB and `apk-sha256.txt`.
+
+**A release is first published as a prerelease.** `release-please-config.json` sets `"prerelease": true`, and the attach step reads that flag back from the release instead of restating it. GitHub's "latest" never points at a prerelease, so `/releases/latest/download/app-release.apk` keeps serving the previous release until someone promotes the new one. Install the prerelease APK from the release page to test it, then promote it without rebuilding:
+
+```sh
+gh release edit <tag> --prerelease=false --latest
+```
+
+Once promoted, set `"prerelease": false` (or remove it) in `release-please-config.json`. Leaving it on would hide every later `0.x` release from `/releases/latest`.
+
+**`versionCode` only goes up.** Android refuses to install a lower `versionCode` over a higher one, and the only way back is to uninstall, which deletes the app's local data, including the device identity. So there is no downgrade: if a release is bad, publish a fixed one with a higher `versionCode`. A fix cut from an older line needs a larger offset than the one in `android/app/build.gradle` (`versionCodeOffset`), so that it installs over any build from the newer line.
 
 ## Signing
 

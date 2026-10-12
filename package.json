@@ -10,13 +10,12 @@
     "build:release": "cap sync android && cd android && ./gradlew assembleRelease bundleRelease"
   },
   "dependencies": {
-    "@capacitor-community/bluetooth-le": "^6.1.0",
-    "@capacitor/android": "^6.2.1",
-    "@capacitor/core": "^6.2.1",
-    "@capacitor/network": "^6.0.0"
+    "@capacitor-community/bluetooth-le": "^8.3.0",
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.2.1",
+    "@capacitor/cli": "^8.5.3",
     "typescript": "^5.6.0"
   }
 }
