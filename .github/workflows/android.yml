@@ -107,11 +107,15 @@ jobs:
           for c in MainActivity SharePackagePlugin \
                    callreliability/VoiceCallForegroundService \
                    callreliability/CallReliabilityPlugin \
-                   mesh/MeshGattServerPlugin; do
-            if grep -aq "Lrun/krolik/oxpulse/$c;" /tmp/all.dex; then
-              echo "  ok      run.krolik.oxpulse.$c"
+                   mesh/MeshGattServerPlugin \
+                   com/capacitorjs/community/plugins/bluetoothle/BluetoothLe \
+                   com/capacitorjs/plugins/network/NetworkPlugin; do
+            # Third-party plugins live outside run/krolik/oxpulse.
+            case "$c" in com/*) fq="$c" ;; *) fq="run/krolik/oxpulse/$c" ;; esac
+            if grep -aq "L$fq;" /tmp/all.dex; then
+              echo "  ok      ${fq//\//.}"
             else
-              echo "::error::run.krolik.oxpulse.$c is ABSENT from the dex — the APK cannot work"
+              echo "::error::${fq//\//.} is ABSENT from the dex — the APK cannot work"
               fail=1
             fi
           done
@@ -173,11 +177,15 @@ jobs:
           for c in MainActivity SharePackagePlugin \
                    callreliability/VoiceCallForegroundService \
                    callreliability/CallReliabilityPlugin \
-                   mesh/MeshGattServerPlugin; do
-            if grep -aq "Lrun/krolik/oxpulse/$c;" /tmp/rel.dex; then
-              echo "  ok      run.krolik.oxpulse.$c"
+                   mesh/MeshGattServerPlugin \
+                   com/capacitorjs/community/plugins/bluetoothle/BluetoothLe \
+                   com/capacitorjs/plugins/network/NetworkPlugin; do
+            # Third-party plugins live outside run/krolik/oxpulse.
+            case "$c" in com/*) fq="$c" ;; *) fq="run/krolik/oxpulse/$c" ;; esac
+            if grep -aq "L$fq;" /tmp/rel.dex; then
+              echo "  ok      ${fq//\//.}"
             else
-              echo "::error::run.krolik.oxpulse.$c is ABSENT from the release dex"
+              echo "::error::${fq//\//.} is ABSENT from the release dex"
               fail=1
             fi
           done
