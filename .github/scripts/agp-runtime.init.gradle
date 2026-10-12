@@ -1,0 +1,13 @@
+// Prints the AGP version each Gradle project's Android plugin was actually
+// loaded from. `buildEnvironment` lists what a project's buildscript DECLARES;
+// this reports what ran. Used by the "Resolved AGP" CI step.
+gradle.afterProject { p ->
+    ['com.android.application', 'com.android.library'].each { id ->
+        if (p.plugins.hasPlugin(id)) {
+            def plugin = p.plugins.getPlugin(id)
+            def version = plugin.class.classLoader.loadClass('com.android.Version').ANDROID_GRADLE_PLUGIN_VERSION
+            def jar = plugin.class.protectionDomain.codeSource.location.path.tokenize('/').last()
+            println "AGP-RUNTIME ${p.path} ${id} agp=${version} jar=${jar}"
+        }
+    }
+}

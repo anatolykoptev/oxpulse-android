@@ -103,6 +103,17 @@ jobs:
               | sed -E 's/^[ |+\\-]+//' | sort | uniq -c || true
           done
 
+          # buildEnvironment shows what each buildscript DECLARES. The block below
+          # shows which AGP actually ran for each project, and fails on any other
+          # than the root's.
+          echo "=== AGP actually applied per project"
+          ./gradlew -q --no-daemon --console=plain -I "$GITHUB_WORKSPACE/.github/scripts/agp-runtime.init.gradle" help \
+            | tee /tmp/agp-runtime.txt
+          grep -q '^AGP-RUNTIME ' /tmp/agp-runtime.txt || { echo "::error::no AGP-RUNTIME lines printed"; exit 1; }
+          if grep '^AGP-RUNTIME ' /tmp/agp-runtime.txt | grep -qv 'agp=8\.13\.2 '; then
+            echo "::error::a project runs an AGP other than 8.13.2"; exit 1
+          fi
+
       # ── The gate that v0.1.0 needed and did not have ────────────────────────
       # A green Gradle build does NOT mean the app can start. :app had no
       # kotlin-android plugin, so its .kt sources were silently skipped and the
