@@ -60,13 +60,15 @@ Requires JDK 21, Node 22, and the Android SDK.
 
 ```sh
 npm ci
-npx cap sync android
+CAP_SERVER_URL=https://oxpulse.chat npx cap sync android
 cd android && ./gradlew assembleDebug
 ```
 
 The output lands in `android/app/build/outputs/apk/debug/`.
 
-To point the app at a different backend, set `CAP_SERVER_URL` before `cap sync`.
+`CAP_SERVER_URL` is required: `capacitor.config.ts` throws when it is unset, so a build can never
+silently load production content. Set it to the backend you want the WebView to open (a staging
+server, for example) before `cap sync`.
 
 Two things worth knowing before you file a build issue:
 
@@ -86,6 +88,11 @@ Releases are published as normal (latest) releases, so `/releases/latest/downloa
 Signing material is never in this repository. CI injects a keystore from encrypted secrets, and the release job fails loudly if any of them is unset — without that check an absent keystore would silently produce an unsigned APK that looks like a successful build.
 
 The same signing key is used for every distribution channel deliberately. If the direct APK and a store build were signed by different keys, Android would refuse to upgrade one with the other, and a user could not move between channels without uninstalling and losing their data.
+
+## Contributing and documents
+
+Build, gate and commit conventions are in [CONTRIBUTING.md](CONTRIBUTING.md); every document is
+indexed in [docs/INDEX.md](docs/INDEX.md).
 
 ## Licence
 
