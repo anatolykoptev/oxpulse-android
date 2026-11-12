@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/anatolykoptev/oxpulse-android/compare/v0.1.3...v0.1.4) (2026-11-12)
+
+
+### Documentation
+
+* bring repository documents up to the repo-standards set ([#56](https://github.com/anatolykoptev/oxpulse-android/issues/56)) ([641883c](https://github.com/anatolykoptev/oxpulse-android/commit/641883cba4f8d4fa3a75ae4228e6806330021b59))
+
 ## [0.1.3](https://github.com/anatolykoptev/oxpulse-android/compare/v0.1.2...v0.1.3) (2026-10-12)
 
 
